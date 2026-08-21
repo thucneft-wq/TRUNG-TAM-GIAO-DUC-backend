@@ -1,0 +1,29 @@
+import { Router } from 'express';
+import type { StudentController } from '../controllers/studentController.js';
+import type { GoogleSheetsController } from '../controllers/googleSheetsController.js';
+import { createGoogleSheetsAuthMiddleware } from '../middleware/googleSheetsAuth.js';
+import { asyncHandler } from '../utils/asyncHandler.js';
+
+export const createIntegrationRouter = (
+  studentController: StudentController,
+  googleSheetsController: GoogleSheetsController,
+  googleSheetsSyncSecret?: string,
+): Router => {
+  const router = Router();
+  router.post(
+    '/google-sheets/students',
+    createGoogleSheetsAuthMiddleware(googleSheetsSyncSecret),
+    asyncHandler(studentController.syncFromGoogleSheets),
+  );
+  router.post(
+    '/google-sheets/counselors',
+    createGoogleSheetsAuthMiddleware(googleSheetsSyncSecret),
+    asyncHandler(googleSheetsController.syncCounselor),
+  );
+  router.post(
+    '/google-sheets/counselor-accounts',
+    createGoogleSheetsAuthMiddleware(googleSheetsSyncSecret),
+    asyncHandler(googleSheetsController.syncCounselorAccount),
+  );
+  return router;
+};

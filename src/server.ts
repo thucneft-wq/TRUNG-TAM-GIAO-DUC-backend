@@ -1,0 +1,65 @@
+// Load .env before validating configuration and opening the PostgreSQL connection.
+import 'dotenv/config';
+import { createApp } from './app.js';
+import { loadConfig } from './config/env.js';
+import { createDatabaseHealthCheck } from './database/health.js';
+import { createDatabasePool } from './database/pool.js';
+import { PgAnalyticsRepository } from './repositories/analyticsRepository.js';
+import { PgCounselorRepository } from './repositories/counselorRepository.js';
+import { PgCounselorAccountRepository } from './repositories/counselorAccountRepository.js';
+import { PgStudentRepository } from './repositories/studentRepository.js';
+import { AnalyticsService } from './services/analyticsService.js';
+import { AuthService } from './services/authService.js';
+import { CounselorService } from './services/counselorService.js';
+import { CounselorAccountService } from './services/counselorAccountService.js';
+import { DashboardService } from './services/dashboardService.js';
+import { StudentService } from './services/studentService.js';
+
+const config = loadConfig();
+const pool = createDatabasePool(config.databaseUrl);
+const counselorRepository = new PgCounselorRepository(pool);
+const counselorAccountRepository = new PgCounselorAccountRepository(pool);
+const analyticsRepository = new PgAnalyticsRepository(pool);
+const studentRepository = new PgStudentRepository(pool);
+const counselorService = new CounselorService(counselorRepository);
+const analyticsService = new AnalyticsService(
+  analyticsRepository,
+  config.minimumAnalyticsSampleSize,
+);
+const studentService = new StudentService(studentRepository);
+const accounts = [
+  {
+    id: 'admin',
+    name: 'Admin Supervisor',
+    email: config.adminEmail,
+    passwordHash: config.adminPasswordHash,
+    role: 'admin' as const,
+  },
+];
+const app = createApp({
+  authService: new AuthService(accounts, config.jwtSecret, counselorAccountRepository),
+  counselorService,
+  counselorAccountService: new CounselorAccountService(counselorAccountRepository),
+  dashboardService: new DashboardService(counselorRepository, counselorService),
+  analyticsService,
+  studentService,
+  checkDatabase: createDatabaseHealthCheck(pool),
+  jwtSecret: config.jwtSecret,
+  corsOrigins: config.corsOrigins,
+  googleSheetsSyncSecret: config.googleSheetsSyncSecret,
+  webCrudEnabled: config.webCrudEnabled,
+});
+
+const server = app.listen(config.port, () => {
+  console.log(`Digital Twin Backend listening on http://localhost:${config.port}`);
+});
+
+const shutdown = (signal: string) => {
+  console.log(`${signal} received; shutting down.`);
+  server.close(() => {
+    void pool.end().finally(() => process.exit(0));
+  });
+};
+
+process.on('SIGINT', () => shutdown('SIGINT'));
+process.on('SIGTERM', () => shutdown('SIGTERM'));

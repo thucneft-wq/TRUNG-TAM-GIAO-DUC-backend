@@ -1,0 +1,442 @@
+import assert from 'node:assert/strict';
+import { once } from 'node:events';
+import test from 'node:test';
+import type { AddressInfo } from 'node:net';
+import jwt from 'jsonwebtoken';
+import { createApp, type AppDependencies } from '../src/app.js';
+import type { CounselorDto } from '../src/types/counselor.js';
+import type { StudentDto } from '../src/types/student.js';
+
+const JWT_SECRET = 'test-only-jwt-secret-with-at-least-32-characters';
+const SYNC_SECRET = 'test-google-sheets-secret-with-32-characters';
+const COUNSELOR_ID = '10000000-0000-4000-8000-000000000001';
+const STUDENT_ID = '20000000-0000-4000-8000-000000000001';
+const token = jwt.sign(
+  { role: 'admin' },
+  JWT_SECRET,
+  { subject: 'admin', issuer: 'digital-twin-backend', expiresIn: '1h' },
+);
+const counselorToken = jwt.sign(
+  { role: 'counselor' },
+  JWT_SECRET,
+  { subject: COUNSELOR_ID, issuer: 'digital-twin-backend', expiresIn: '1h' },
+);
+
+const counselorFixture = {
+  id: COUNSELOR_ID,
+  firstName: 'Dev',
+  lastName: 'Counselor',
+  name: 'Dev Counselor',
+  status: 'ACTIVE',
+  kpis: [],
+  passedKpis: 0,
+  totalKpis: 5,
+  overallStatus: 'Not Pass',
+} as unknown as CounselorDto;
+
+const studentFixture: StudentDto = {
+  id: STUDENT_ID,
+  firstName: 'Dev',
+  lastName: 'Student',
+  name: 'Dev Student',
+  gender: 'UNSPECIFIED',
+  phoneNumber: '000-100-0001',
+  email: 'student@example.invalid',
+  dateOfBirth: '2010-01-01',
+  status: 'ACTIVE',
+  schoolId: null,
+  addressId: null,
+  assignedCounselorId: COUNSELOR_ID,
+  assignedCounselorName: 'Dev Counselor',
+  createdAt: '2026-08-01T00:00:00.000Z',
+  updatedAt: null,
+};
+
+const createDependencies = (): AppDependencies => ({
+  authService: {
+    login: async () => ({
+      token: 'signed-token',
+      user: {
+        id: 'admin',
+        name: 'Admin Supervisor',
+        email: 'admin@example.invalid',
+        role: 'admin',
+      },
+    }),
+  },
+  counselorService: {
+    list: async () => [counselorFixture],
+    getById: async () => counselorFixture,
+    create: async () => counselorFixture,
+    update: async () => counselorFixture,
+    deactivate: async () => undefined,
+    syncFromGoogleSheets: async () => ({ counselor: counselorFixture, created: true }),
+  },
+  counselorAccountService: {
+    syncFromGoogleSheets: async (input) => ({
+      userId: '30000000-0000-4000-8000-000000000001',
+      counselorId: COUNSELOR_ID,
+      email: input.email,
+      status: input.status,
+      created: true,
+    }),
+  },
+  studentService: {
+    list: async () => [studentFixture],
+    getById: async () => studentFixture,
+    create: async () => studentFixture,
+    update: async () => studentFixture,
+    deactivate: async () => undefined,
+    syncFromGoogleSheets: async () => ({ student: studentFixture, created: true }),
+  },
+  dashboardService: {
+    get: async () => ({ activeCounselors: 1 }),
+  },
+  analyticsService: {
+    getFilterOptions: async () => ({ counselors: [], tests: [], categories: [] }),
+    getStudentTrends: async () => ({ timeline: [] }),
+    getFeedback: async () => ({ timeline: [] }),
+    exportCsv: async () => '\uFEFFmetric,value\r\n',
+    recordAudit: async () => undefined,
+    listAuditLogs: async () => [],
+  },
+  checkDatabase: async () => undefined,
+  jwtSecret: JWT_SECRET,
+  corsOrigins: ['http://localhost:3000'],
+  googleSheetsSyncSecret: SYNC_SECRET,
+});
+
+const request = async (
+  dependencies: AppDependencies,
+  path: string,
+  init: RequestInit = {},
+): Promise<Response> => {
+  const server = createApp(dependencies).listen(0, '127.0.0.1');
+  await once(server, 'listening');
+  const address = server.address() as AddressInfo;
+
+  try {
+    return await fetch(`http://127.0.0.1:${address.port}${path}`, init);
+  } finally {
+    await new Promise<void>((resolve, reject) => {
+      server.close((error) => error ? reject(error) : resolve());
+    });
+  }
+};
+
+const authHeaders = {
+  Authorization: `Bearer ${token}`,
+  'Content-Type': 'application/json',
+};
+
+test('root route describes the running backend instead of returning 404', async () => {
+  const response = await request(createDependencies(), '/');
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), {
+    name: 'Digital Twin Backend',
+    status: 'running',
+    health: '/api/health',
+    frontend: 'http://localhost:3000',
+  });
+});
+
+test('login validates input before calling the auth service', async () => {
+  const response = await request(createDependencies(), '/api/auth/login', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email: 'not-an-email', password: '123456' }),
+  });
+  assert.equal(response.status, 400);
+  assert.equal((await response.json()).error.code, 'VALIDATION_ERROR');
+});
+
+test('malformed JSON returns a client error instead of a server error', async () => {
+  const response = await request(createDependencies(), '/api/auth/login', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: '{invalid-json}',
+  });
+  assert.equal(response.status, 400);
+  assert.equal((await response.json()).error.code, 'INVALID_JSON');
+});
+
+test('admin routes reject unauthenticated requests', async () => {
+  const response = await request(createDependencies(), '/api/admin/counselors');
+  assert.equal(response.status, 401);
+  assert.equal((await response.json()).error.code, 'AUTHENTICATION_REQUIRED');
+});
+
+test('counselor cannot access admin analytics', async () => {
+  const response = await request(createDependencies(), '/api/admin/analytics/filters', {
+    headers: { Authorization: `Bearer ${counselorToken}` },
+  });
+  assert.equal(response.status, 403);
+  assert.equal((await response.json()).error.code, 'ROLE_FORBIDDEN');
+});
+
+test('counselor cannot mutate counselors', async () => {
+  const response = await request(createDependencies(), '/api/admin/counselors', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${counselorToken}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      firstName: 'Read-only',
+      lastName: 'Counselor',
+      email: 'readonly@example.invalid',
+    }),
+  });
+  assert.equal(response.status, 403);
+  assert.equal((await response.json()).error.code, 'ROLE_FORBIDDEN');
+});
+
+test('only admin can read audit logs', async () => {
+  const counselorResponse = await request(createDependencies(), '/api/admin/audit-logs', {
+    headers: { Authorization: `Bearer ${counselorToken}` },
+  });
+  assert.equal(counselorResponse.status, 403);
+
+  const adminResponse = await request(createDependencies(), '/api/admin/audit-logs', {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  assert.equal(adminResponse.status, 200);
+  assert.deepEqual(await adminResponse.json(), { auditLogs: [] });
+});
+
+test('counselor can list only the students provided by the scoped service', async () => {
+  let receivedCounselorId: string | null = null;
+  const dependencies = createDependencies();
+  dependencies.studentService.list = async (scope) => {
+    receivedCounselorId = scope.counselorId;
+    return [studentFixture];
+  };
+  const response = await request(dependencies, '/api/students', {
+    headers: { Authorization: `Bearer ${counselorToken}` },
+  });
+  assert.equal(response.status, 200);
+  assert.equal((await response.json()).students[0].id, STUDENT_ID);
+  assert.equal(receivedCounselorId, COUNSELOR_ID);
+});
+
+test('counselor can create, update and soft-delete a student', async () => {
+  const dependencies = createDependencies();
+  let created = false;
+  let updated = false;
+  let deactivated = false;
+  dependencies.studentService.create = async () => {
+    created = true;
+    return studentFixture;
+  };
+  dependencies.studentService.update = async () => {
+    updated = true;
+    return studentFixture;
+  };
+  dependencies.studentService.deactivate = async () => {
+    deactivated = true;
+  };
+  const headers = {
+    Authorization: `Bearer ${counselorToken}`,
+    'Content-Type': 'application/json',
+  };
+
+  const createResponse = await request(dependencies, '/api/students', {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({
+      firstName: 'Dev',
+      lastName: 'Student',
+      phoneNumber: '000-100-0001',
+    }),
+  });
+  const updateResponse = await request(dependencies, `/api/students/${STUDENT_ID}`, {
+    method: 'PATCH',
+    headers,
+    body: JSON.stringify({ phoneNumber: '000-100-0002' }),
+  });
+  const deleteResponse = await request(dependencies, `/api/students/${STUDENT_ID}`, {
+    method: 'DELETE',
+    headers: { Authorization: `Bearer ${counselorToken}` },
+  });
+
+  assert.equal(createResponse.status, 201);
+  assert.equal(updateResponse.status, 200);
+  assert.equal(deleteResponse.status, 204);
+  assert.equal(created, true);
+  assert.equal(updated, true);
+  assert.equal(deactivated, true);
+});
+
+test('Google Sheets webhook requires its secret and synchronizes Student data', async () => {
+  let synchronized = false;
+  const dependencies = createDependencies();
+  dependencies.studentService.syncFromGoogleSheets = async () => {
+    synchronized = true;
+    return { student: studentFixture, created: true };
+  };
+  const body = JSON.stringify({
+    firstName: 'Sheet',
+    lastName: 'Student',
+    phoneNumber: '000-200-0001',
+  });
+  const unauthorized = await request(
+    dependencies,
+    '/api/integrations/google-sheets/students',
+    { method: 'POST', headers: { 'Content-Type': 'application/json' }, body },
+  );
+  assert.equal(unauthorized.status, 401);
+
+  const authorized = await request(
+    dependencies,
+    '/api/integrations/google-sheets/students',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-google-sync-secret': SYNC_SECRET },
+      body,
+    },
+  );
+  assert.equal(authorized.status, 201);
+  assert.equal(synchronized, true);
+});
+
+test('Google Sheets webhook synchronizes Counselor profiles', async () => {
+  let synchronized = false;
+  const dependencies = createDependencies();
+  dependencies.counselorService.syncFromGoogleSheets = async () => {
+    synchronized = true;
+    return { counselor: counselorFixture, created: true };
+  };
+  const response = await request(
+    dependencies,
+    '/api/integrations/google-sheets/counselors',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-google-sync-secret': SYNC_SECRET },
+      body: JSON.stringify({
+        counselorId: COUNSELOR_ID,
+        firstName: 'Dev',
+        lastName: 'Counselor',
+        email: 'counselor@example.invalid',
+        status: 'ACTIVE',
+      }),
+    },
+  );
+  assert.equal(response.status, 201);
+  assert.equal(synchronized, true);
+});
+
+test('Google Sheets webhook synchronizes Counselor login accounts without echoing passwords', async () => {
+  let receivedPassword = '';
+  const dependencies = createDependencies();
+  dependencies.counselorAccountService.syncFromGoogleSheets = async (input) => {
+    receivedPassword = input.password ?? '';
+    return {
+      userId: '30000000-0000-4000-8000-000000000001',
+      counselorId: COUNSELOR_ID,
+      email: input.email,
+      status: input.status,
+      created: true,
+    };
+  };
+  const response = await request(
+    dependencies,
+    '/api/integrations/google-sheets/counselor-accounts',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-google-sync-secret': SYNC_SECRET },
+      body: JSON.stringify({
+        counselorId: COUNSELOR_ID,
+        email: 'counselor@example.invalid',
+        password: 'Temporary@123',
+        status: 'ACTIVE',
+      }),
+    },
+  );
+  assert.equal(response.status, 201);
+  assert.equal(receivedPassword, 'Temporary@123');
+  const payload = await response.json();
+  assert.equal('password' in payload.account, false);
+  assert.equal('passwordHash' in payload.account, false);
+});
+
+test('analytics export returns a CSV attachment and records an audit event', async () => {
+  let auditAction = '';
+  const dependencies = createDependencies();
+  dependencies.analyticsService.recordAudit = async (_actor, action) => {
+    auditAction = action;
+  };
+
+  const response = await request(
+    dependencies,
+    '/api/admin/analytics/export?type=overview&period=this_month',
+    { headers: { Authorization: `Bearer ${token}` } },
+  );
+  assert.equal(response.status, 200);
+  assert.match(response.headers.get('content-type') ?? '', /^text\/csv/);
+  assert.match(response.headers.get('content-disposition') ?? '', /overview-this_month\.csv/);
+  assert.match(await response.text(), /metric,value/);
+  assert.equal(auditAction, 'EXPORT_ANALYTICS');
+});
+
+test('create counselor rejects unknown fields', async () => {
+  const response = await request(createDependencies(), '/api/admin/counselors', {
+    method: 'POST',
+    headers: authHeaders,
+    body: JSON.stringify({
+      firstName: 'Dev',
+      lastName: 'Counselor',
+      email: 'dev@example.invalid',
+      status: 'ACTIVE',
+      studentCaseNotes: 'must never be accepted',
+    }),
+  });
+  assert.equal(response.status, 400);
+  assert.equal((await response.json()).error.code, 'VALIDATION_ERROR');
+});
+
+test('read counselor returns the service result', async () => {
+  const response = await request(
+    createDependencies(),
+    `/api/admin/counselors/${COUNSELOR_ID}?period=this_month`,
+    { headers: { Authorization: `Bearer ${token}` } },
+  );
+  assert.equal(response.status, 200);
+  assert.equal((await response.json()).counselor.id, COUNSELOR_ID);
+});
+
+test('update counselor forwards only validated fields', async () => {
+  let receivedName = '';
+  const dependencies = createDependencies();
+  dependencies.counselorService.update = async (_id, input) => {
+    receivedName = input.firstName ?? '';
+    return counselorFixture;
+  };
+
+  const response = await request(
+    dependencies,
+    `/api/admin/counselors/${COUNSELOR_ID}`,
+    {
+      method: 'PATCH',
+      headers: authHeaders,
+      body: JSON.stringify({ firstName: 'Updated' }),
+    },
+  );
+  assert.equal(response.status, 200);
+  assert.equal(receivedName, 'Updated');
+});
+
+test('soft delete endpoint returns 204 and calls deactivate', async () => {
+  let deactivatedId = '';
+  const dependencies = createDependencies();
+  dependencies.counselorService.deactivate = async (id) => {
+    deactivatedId = id;
+  };
+
+  const response = await request(
+    dependencies,
+    `/api/admin/counselors/${COUNSELOR_ID}`,
+    { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } },
+  );
+  assert.equal(response.status, 204);
+  assert.equal(deactivatedId, COUNSELOR_ID);
+});
