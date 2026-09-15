@@ -19,7 +19,10 @@ export class DashboardService implements DashboardServicePort {
       this.repository.getDashboardTrends(range),
       this.counselorService.list(period),
     ]);
-    const passedCounselors = counselors.filter(
+    const activeCounselors = counselors.filter(
+      (counselor) => counselor.status === 'ACTIVE',
+    );
+    const passedCounselors = activeCounselors.filter(
       (counselor) => counselor.overallStatus === 'Pass',
     ).length;
 
@@ -31,7 +34,7 @@ export class DashboardService implements DashboardServicePort {
       totalTestAttempts: countValue(counts.total_test_attempts),
       totalBookings: countValue(counts.total_bookings),
       passedCounselors,
-      notPassedCounselors: counselors.length - passedCounselors,
+      notPassedCounselors: activeCounselors.length - passedCounselors,
       bookingStatus: {
         completed: countValue(counts.completed_bookings),
         pending: countValue(counts.pending_bookings),

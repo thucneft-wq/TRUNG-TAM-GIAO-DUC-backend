@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { studentStatuses } from '../types/student.js';
+import { schoolLevels, studentStatuses } from '../types/student.js';
 
 const nullableUuid = z.string().uuid().nullable().optional();
 const nullableDate = z.string().date().nullable().optional();
@@ -14,6 +14,8 @@ export const createStudentSchema = z.object({
   email: z.email().max(225).nullable().optional(),
   dateOfBirth: nullableDate,
   status: z.enum(studentStatuses).default('ACTIVE'),
+  schoolLevel: z.enum(schoolLevels).nullable().optional(),
+  schoolName: z.string().trim().min(1).max(225).nullable().optional(),
   schoolId: nullableUuid,
   addressId: nullableUuid,
   counselorId: nullableUuid,

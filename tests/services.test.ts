@@ -22,8 +22,14 @@ import type {
   CounselorProfileRow,
   KpiItem,
 } from '../src/types/counselor.js';
-import { evaluateKpiSet, evaluateValue, KPI_DEFINITIONS } from '../src/utils/kpiPolicy.js';
+import {
+  calculateKpiScore,
+  evaluateKpiSet,
+  evaluateKpiValue,
+  KPI_DEFINITIONS,
+} from '../src/utils/kpiPolicy.js';
 import { safePercentage } from '../src/utils/period.js';
+import { AppError } from '../src/utils/appError.js';
 
 const createKpis = (failedId?: string, nullId?: string): KpiItem[] =>
   KPI_DEFINITIONS.map((definition) => {
@@ -37,30 +43,55 @@ const createKpis = (failedId?: string, nullId?: string): KpiItem[] =>
       ? null
       : definition.id === failedId ? failingValue : passingValue;
 
+    const evidence: KpiItem['evidence'] = definition.id === 'weighted-caseload-capacity'
+      ? { sampleSize: actualNumeric ?? 0, weightedCaseloadPoints: actualNumeric ?? 0, fteRatio: 1 }
+      : definition.id === 'student-service-time'
+        ? { numerator: 8, denominator: 10, studentServiceHours: 8, registeredHours: 10 }
+        : definition.id === 'eligible-session-completion'
+          ? { numerator: 4, denominator: 5 }
+          : definition.id === 'assessment-follow-through'
+            ? { numerator: 3, denominator: 3 }
+            : { sampleSize: 5, minimumSampleSize: 5 };
+
     return {
       ...definition,
       actualNumeric,
       actualValue: String(actualNumeric),
-      isPassed: evaluateValue(actualNumeric, definition.targetNumeric, definition.comparisonType),
+      score: calculateKpiScore(definition, actualNumeric, evidence),
+      isPassed: evaluateKpiValue(definition, actualNumeric, evidence),
       notes: 'Unit test fixture',
+      evidence,
     };
   });
 
-test('5/5 KPI values evaluate to Pass', () => {
+test('four on-target performance KPIs with a safe caseload evaluate to Pass', () => {
   const result = evaluateKpiSet(createKpis());
-  assert.equal(result.passedKpis, 5);
+  assert.equal(result.passedKpis, 4);
   assert.equal(result.overallStatus, 'Pass');
 });
 
-test('4/5 KPI values evaluate to Not Pass', () => {
-  const result = evaluateKpiSet(createKpis('student-satisfaction'));
-  assert.equal(result.passedKpis, 4);
-  assert.equal(result.overallStatus, 'Not Pass');
+test('three of four performance KPIs can pass with a minor miss', () => {
+  const result = evaluateKpiSet(createKpis('student-outcome-experience'));
+  assert.equal(result.passedKpis, 3);
+  assert.equal(result.overallStatus, 'Pass');
 });
 
-test('a NULL KPI value evaluates to Not Pass', () => {
-  const result = evaluateKpiSet(createKpis(undefined, 'session-completion-rate'));
-  assert.equal(result.overallStatus, 'Not Pass');
+test('one unavailable performance KPI can still pass with the other three met', () => {
+  const result = evaluateKpiSet(createKpis(undefined, 'eligible-session-completion'));
+  assert.equal(result.passedKpis, 3);
+  assert.equal(result.overallStatus, 'Pass');
+});
+
+test('two unavailable criteria return Insufficient Data instead of a performance failure', () => {
+  const kpis = createKpis(undefined, 'eligible-session-completion').map((kpi) =>
+    kpi.id === 'assessment-follow-through'
+      ? { ...kpi, actualNumeric: null, score: 0, isPassed: false }
+      : kpi,
+  );
+  const result = evaluateKpiSet(kpis);
+  assert.equal(result.evaluableKpis, 2);
+  assert.equal(result.insufficientDataKpis, 2);
+  assert.equal(result.overallStatus, 'Insufficient Data');
 });
 
 test('zero denominator returns NULL instead of dividing by zero', () => {
@@ -68,37 +99,71 @@ test('zero denominator returns NULL instead of dividing by zero', () => {
   assert.equal(safePercentage(4, 5), 80);
 });
 
-test('Admin KPI query follows the official all-time formulas', () => {
+test('weighted caseload is a safety guardrail and zero cases are insufficient data', () => {
+  const definition = KPI_DEFINITIONS.find((item) => item.id === 'weighted-caseload-capacity')!;
+  assert.equal(evaluateKpiValue(definition, 0), false);
+  assert.equal(evaluateKpiValue(definition, 8), true);
+  assert.equal(evaluateKpiValue(definition, 20), true);
+  assert.equal(evaluateKpiValue(definition, 21), false);
+  const noCases = createKpis().map((kpi) => kpi.id === definition.id
+    ? { ...kpi, actualNumeric: 0, score: 0, isPassed: false }
+    : kpi);
+  assert.equal(evaluateKpiSet(noCases).overallStatus, 'Insufficient Data');
+  const overloaded = evaluateKpiSet(createKpis('weighted-caseload-capacity'));
+  assert.equal(overloaded.overallStatus, 'Not Pass');
+});
+
+test('student outcome and experience requires a minimum anonymous sample', () => {
+  const definition = KPI_DEFINITIONS.find((item) => item.id === 'student-outcome-experience')!;
+  assert.equal(evaluateKpiValue(definition, 90, { sampleSize: 4, minimumSampleSize: 5 }), false);
+  assert.equal(evaluateKpiValue(definition, 90, { sampleSize: 5, minimumSampleSize: 5 }), true);
+});
+
+test('Admin KPI query follows the official formulas', () => {
+  assert.match(
+    COUNSELOR_ANALYTICS_SQL,
+    /UPPER\(c\.status\) IN \('ACTIVE', 'ON_LEAVE'\)/,
+  );
   assert.match(COUNSELOR_ANALYTICS_SQL, /car\.ended_at IS NULL/);
   assert.match(COUNSELOR_ANALYTICS_SQL, /UPPER\(s\.status\) = 'COMPLETED'/);
   assert.doesNotMatch(COUNSELOR_ANALYTICS_SQL, /s\.ended_at IS NOT NULL/);
   assert.match(COUNSELOR_ANALYTICS_SQL, /b\.cancelled_at IS NOT NULL/);
+  assert.match(COUNSELOR_ANALYTICS_SQL, /FROM Availability_Slots a/);
+  assert.match(COUNSELOR_ANALYTICS_SQL, /a\.start_time >= \$3::TIMESTAMPTZ/);
+  assert.match(COUNSELOR_ANALYTICS_SQL, /registered_hours > 8/);
+  assert.match(COUNSELOR_ANALYTICS_SQL, /registered_workdays > 6/);
+  assert.match(COUNSELOR_ANALYTICS_SQL, /student_service_hours/);
+  assert.match(COUNSELOR_ANALYTICS_SQL, /NO_SHOW_STUDENT/);
+  assert.match(COUNSELOR_ANALYTICS_SQL, /'DECLINED', 'WITHDRAWN', 'NOT_REQUIRED'/);
   assert.match(
     COUNSELOR_ANALYTICS_SQL,
     /r\.result_id IS NOT NULL OR UPPER\(tat\.status\) = 'COMPLETED'/,
   );
   assert.doesNotMatch(COUNSELOR_ANALYTICS_SQL, /tat\.submitted_at IS NOT NULL/);
   assert.match(COUNSELOR_ANALYTICS_SQL, /ROUND\(AVG\(f\.rating\)::NUMERIC, 2\)/);
-  assert.doesNotMatch(
-    COUNSELOR_ANALYTICS_SQL,
-    /(?:b\.start_time|ta\.assigned_at|f\.created_at)\s*(?:>=|<)/,
-  );
+  assert.doesNotMatch(COUNSELOR_ANALYTICS_SQL, /booking-cancellation-rate/);
 });
 
-test('Counselor login can use an ACTIVE database-backed account', async () => {
-  const passwordHash = await bcrypt.hash('Counselor@123', 4);
-  const service = new AuthService([], 'test-only-jwt-secret-with-at-least-32-characters', {
-    findCounselorByEmail: async () => ({
-      id: '10000000-0000-4000-8000-000000000001',
-      name: 'Dev Counselor',
-      email: 'counselor@example.invalid',
-      passwordHash,
-      role: 'counselor',
-    }),
-  });
-  const result = await service.login('COUNSELOR@example.invalid', 'Counselor@123');
-  assert.equal(result.user.role, 'counselor');
-  assert.equal(result.user.id, '10000000-0000-4000-8000-000000000001');
+test('Only the configured Admin account can authenticate to the Web portal', async () => {
+  const passwordHash = await bcrypt.hash('Admin@123', 4);
+  const service = new AuthService([{
+    id: 'admin',
+    name: 'Admin Supervisor',
+    email: 'admin@example.invalid',
+    passwordHash,
+    role: 'admin',
+  }], 'test-only-jwt-secret-with-at-least-32-characters');
+
+  const result = await service.login('ADMIN@example.invalid', 'Admin@123');
+  assert.equal(result.user.role, 'admin');
+  assert.equal(result.user.id, 'admin');
+
+  await assert.rejects(
+    () => service.login('counselor@example.invalid', 'Admin@123'),
+    (error: unknown) => error instanceof AppError
+      && error.status === 401
+      && error.code === 'INVALID_CREDENTIALS',
+  );
 });
 
 const analyticsFilters: AnalyticsFilters = {
@@ -157,8 +222,10 @@ const studentRow: StudentRow = {
   gender: null,
   phone_number: '000-100-0001',
   email: null,
-  date_of_birth: null,
+  date_of_birth: new Date('2010-01-01T00:00:00+07:00'),
   status: 'ACTIVE',
+  school_level: 'THCS',
+  school_name: 'Trường THCS Mẫu',
   school_id: null,
   address_id: null,
   assigned_counselor_id: '10000000-0000-4000-8000-000000000001',
@@ -184,6 +251,9 @@ test('student service maps only the scoped repository result', async () => {
   });
   assert.equal(students.length, 1);
   assert.equal(students[0].name, 'Dev Student');
+  assert.equal(students[0].schoolLevel, 'THCS');
+  assert.equal(students[0].schoolName, 'Trường THCS Mẫu');
+  assert.equal(students[0].dateOfBirth, '2010-01-01');
   assert.equal(students[0].assignedCounselorId, studentRow.assigned_counselor_id);
 });
 
@@ -200,6 +270,38 @@ test('unlinked counselor cannot access Student service', async () => {
   );
 });
 
+test('Google Sheets inactive status soft-deletes an existing student', async () => {
+  let deactivatedId = '';
+  let updateCalled = false;
+  const repository = createStudentRepository();
+  repository.findByContact = async () => studentRow;
+  repository.deactivate = async (id) => {
+    deactivatedId = id;
+    return true;
+  };
+  repository.getById = async () => ({ ...studentRow, status: 'INACTIVE' });
+  repository.update = async () => {
+    updateCalled = true;
+    return studentRow;
+  };
+
+  const service = new StudentService(repository);
+  const result = await service.syncFromGoogleSheets({
+    firstName: studentRow.first_name,
+    lastName: studentRow.last_name,
+    phoneNumber: studentRow.phone_number,
+    email: studentRow.email,
+    status: 'INACTIVE',
+    schoolLevel: studentRow.school_level,
+    schoolName: studentRow.school_name,
+  });
+
+  assert.equal(result.created, false);
+  assert.equal(result.student.status, 'INACTIVE');
+  assert.equal(deactivatedId, studentRow.student_id);
+  assert.equal(updateCalled, false);
+});
+
 const analyticsRow: CounselorAnalyticsRow = {
   counselor_id: '10000000-0000-4000-8000-000000000001',
   first_name: 'Dev',
@@ -212,6 +314,14 @@ const analyticsRow: CounselorAnalyticsRow = {
   specialization: 'Development',
   status: 'ACTIVE',
   assigned_students: 10,
+  weighted_caseload_points: 10,
+  fte_ratio: 1,
+  student_service_hours: 166.4,
+  registered_workdays: 26,
+  registered_hours: 208,
+  max_daily_hours: 8,
+  over_limit_days: 0,
+  weeks_without_rest: 0,
   completed_sessions: 4,
   total_sessions: 5,
   completed_bookings: 4,
@@ -252,6 +362,10 @@ test('counselor service reads and maps anonymous analytics', async () => {
   assert.equal(counselor.name, 'Dev Counselor');
   assert.equal(counselor.kpis.length, 5);
   assert.equal(counselor.overallStatus, 'Pass');
+  assert.equal(counselor.overallScore, 76.47);
+  assert.equal(counselor.evaluableKpis, 3);
+  assert.equal(counselor.insufficientDataKpis, 1);
+  assert.equal(counselor.hrCompliance.status, 'Compliant');
   assert.equal('students' in counselor, false);
 });
 

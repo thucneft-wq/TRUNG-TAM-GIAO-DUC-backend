@@ -1,5 +1,4 @@
 import type { Pool, PoolClient } from 'pg';
-import type { AuthAccount, AuthAccountRepositoryPort } from '../services/authService.js';
 import type {
   CounselorAccountSyncResult,
   GoogleSheetsCounselorAccountInput,
@@ -44,32 +43,8 @@ const findCounselor = async (
 };
 
 export class PgCounselorAccountRepository
-implements AuthAccountRepositoryPort, CounselorAccountRepositoryPort {
+implements CounselorAccountRepositoryPort {
   constructor(private readonly pool: Pool) {}
-
-  async findCounselorByEmail(email: string): Promise<AuthAccount | null> {
-    const result = await this.pool.query<AuthAccount & { password_hash: string }>(`
-      SELECT
-        c.counselor_id AS id,
-        CONCAT_WS(' ', c.first_name, c.last_name) AS name,
-        u.email,
-        u.password_hash AS "passwordHash",
-        'counselor'::TEXT AS role
-      FROM Users u
-      JOIN User_Profiles up ON up.user_id = u.user_id
-      JOIN Counselors c ON c.counselor_id = up.counselor_id
-      JOIN User_Roles ur ON ur.user_id = u.user_id
-      JOIN Roles r ON r.role_id = ur.role_id
-      WHERE LOWER(BTRIM(u.email)) = LOWER(BTRIM($1::VARCHAR))
-        AND UPPER(u.status) = 'ACTIVE'
-        AND UPPER(c.status) = 'ACTIVE'
-        AND UPPER(r.role_code) = 'COUNSELOR'
-        AND r.is_active = TRUE
-        AND (ur.expires_at IS NULL OR ur.expires_at > now())
-      LIMIT 1
-    `, [email]);
-    return result.rows[0] ?? null;
-  }
 
   async syncFromGoogleSheets(
     input: GoogleSheetsCounselorAccountInput,

@@ -10,7 +10,14 @@ import type {
 import type { GoogleSheetsCounselorInput } from '../types/googleSheets.js';
 import type { CounselorServicePort } from '../types/services.js';
 import { AppError } from '../utils/appError.js';
-import { evaluateKpiSet, evaluateValue, KPI_DEFINITIONS } from '../utils/kpiPolicy.js';
+import { toDateOnly } from '../utils/dateOnly.js';
+import {
+  calculateKpiScore,
+  evaluateKpiSet,
+  evaluateKpiValue,
+  KPI_DEFINITIONS,
+  MINIMUM_FEEDBACK_SAMPLE_SIZE,
+} from '../utils/kpiPolicy.js';
 import { getPeriodRange, safePercentage } from '../utils/period.js';
 
 const toNumber = (value: number | string | null): number | null => {
@@ -37,17 +44,25 @@ const createKpi = (
   ...definition,
   actualNumeric,
   actualValue: formatActual(actualNumeric, definition.unit),
-  isPassed: evaluateValue(
-    actualNumeric,
-    definition.targetNumeric,
-    definition.comparisonType,
-  ),
+  score: calculateKpiScore(definition, actualNumeric, evidence),
+  isPassed: evaluateKpiValue(definition, actualNumeric, evidence),
   notes,
   evidence,
 });
 
 export const mapAnalyticsRow = (row: CounselorAnalyticsRow): CounselorDto => {
   const assignedStudents = toCount(row.assigned_students);
+  const weightedCaseloadPoints = toNumber(row.weighted_caseload_points) ?? assignedStudents;
+  const fteRatio = toNumber(row.fte_ratio) ?? 1;
+  const normalizedCaseload = fteRatio > 0
+    ? Math.round((weightedCaseloadPoints / fteRatio) * 100) / 100
+    : null;
+  const studentServiceHours = toNumber(row.student_service_hours) ?? 0;
+  const registeredWorkdays = toCount(row.registered_workdays);
+  const registeredHours = toNumber(row.registered_hours) ?? 0;
+  const maxDailyHours = toNumber(row.max_daily_hours) ?? 0;
+  const overLimitDays = toCount(row.over_limit_days);
+  const weeksWithoutRest = toCount(row.weeks_without_rest);
   const completedSessions = toCount(row.completed_sessions);
   const totalSessions = toCount(row.total_sessions);
   const completedBookings = toCount(row.completed_bookings);
@@ -58,61 +73,85 @@ export const mapAnalyticsRow = (row: CounselorAnalyticsRow): CounselorDto => {
   const assignedTests = toCount(row.total_assigned_tests);
   const feedbackCount = toCount(row.feedback_count);
   const satisfactionScore = toNumber(row.satisfaction_score);
+  const studentServiceTime = safePercentage(studentServiceHours, registeredHours);
+  const outcomeExperienceScore = feedbackCount >= MINIMUM_FEEDBACK_SAMPLE_SIZE && satisfactionScore !== null
+    ? Math.round(satisfactionScore * 20 * 100) / 100
+    : null;
 
   const actuals = new Map<string, number | null>([
-    ['caseload-compliance', assignedStudents],
-    ['session-completion-rate', safePercentage(completedSessions, totalSessions)],
-    ['booking-cancellation-rate', safePercentage(cancelledBookings, totalBookings)],
-    ['test-completion-rate', safePercentage(completedTests, assignedTests)],
-    ['student-satisfaction', satisfactionScore],
+    ['weighted-caseload-capacity', normalizedCaseload],
+    ['student-service-time', studentServiceTime],
+    ['eligible-session-completion', safePercentage(completedSessions, totalSessions)],
+    ['assessment-follow-through', safePercentage(completedTests, assignedTests)],
+    ['student-outcome-experience', outcomeExperienceScore],
   ]);
 
   const kpis = KPI_DEFINITIONS.map((definition) => {
     const actual = actuals.get(definition.id) ?? null;
 
     switch (definition.id) {
-      case 'caseload-compliance':
+      case 'weighted-caseload-capacity':
         return createKpi(
           definition,
           actual,
-          'Distinct students with active assignments that have not ended.',
-          { sampleSize: assignedStudents },
+          'Active cases are normalized by FTE. The current schema defaults each case to weight 1 and each counselor to 1.0 FTE.',
+          { sampleSize: assignedStudents, weightedCaseloadPoints, fteRatio },
         );
-      case 'session-completion-rate':
+      case 'student-service-time':
         return createKpi(
           definition,
           actual,
-          `${completedSessions} completed of ${totalSessions} sessions.`,
+          `${studentServiceHours.toFixed(2)} completed student-session hours of ${registeredHours.toFixed(2)} registered service hours. Indirect service requires structured time logs and is not yet included.`,
+          {
+            numerator: studentServiceHours,
+            denominator: registeredHours,
+            studentServiceHours,
+            registeredHours,
+          },
+        );
+      case 'eligible-session-completion':
+        return createKpi(
+          definition,
+          actual,
+          `${completedSessions} completed of ${totalSessions} eligible sessions due in the reporting period. Student cancellations, reschedules and future sessions are excluded.`,
           { numerator: completedSessions, denominator: totalSessions },
         );
-      case 'booking-cancellation-rate':
+      case 'assessment-follow-through':
         return createKpi(
           definition,
           actual,
-          `${cancelledBookings} cancelled of ${totalBookings} bookings.`,
-          { numerator: cancelledBookings, denominator: totalBookings },
-        );
-      case 'test-completion-rate':
-        return createKpi(
-          definition,
-          actual,
-          `${completedTests} completed of ${assignedTests} assigned tests.`,
+          `${completedTests} completed of ${assignedTests} eligible assigned assessments; declined, withdrawn, not-required and cancelled assignments are excluded.`,
           { numerator: completedTests, denominator: assignedTests },
         );
       default:
         return createKpi(
           definition,
           actual,
-          `Anonymous average from ${feedbackCount} feedback ratings.`,
-          { sampleSize: feedbackCount },
+          `Perceived outcome score from ${feedbackCount} anonymous responses. A minimum of ${MINIMUM_FEEDBACK_SAMPLE_SIZE} responses is required; structured clinical outcome data is not yet available in the current schema.`,
+          {
+            sampleSize: feedbackCount,
+            minimumSampleSize: MINIMUM_FEEDBACK_SAMPLE_SIZE,
+            averageRating: satisfactionScore ?? undefined,
+          },
         );
     }
   });
   const evaluation = evaluateKpiSet(kpis);
-  const dateOfBirth = row.date_of_birth
-    ? new Date(row.date_of_birth).toISOString().slice(0, 10)
-    : null;
+  const dateOfBirth = toDateOnly(row.date_of_birth);
   const pendingTests = Math.max(0, assignedTests - completedTests);
+  const hrCompliance = {
+    status: registeredWorkdays === 0
+      ? 'No Data' as const
+      : overLimitDays === 0 && weeksWithoutRest === 0
+        ? 'Compliant' as const
+        : 'Needs Review' as const,
+    registeredWorkdays,
+    registeredHours,
+    maxDailyHours,
+    overLimitDays,
+    weeksWithoutRest,
+    note: 'HR attendance is reported separately from professional KPI scoring. Expected contracted hours, holidays and approved leave are not available in the current schema.',
+  };
 
   return {
     id: row.counselor_id,
@@ -126,10 +165,12 @@ export const mapAnalyticsRow = (row: CounselorAnalyticsRow): CounselorDto => {
     role: row.role,
     specialization: row.specialization,
     status: row.status,
+    fteRatio,
     title: row.role ?? 'Counselor',
     department: row.specialization ?? 'Counseling Services',
     kpis,
     ...evaluation,
+    hrCompliance,
     relationshipSummary: {
       assignedStudents,
       completedBookings,
@@ -152,6 +193,8 @@ export const mapAnalyticsRow = (row: CounselorAnalyticsRow): CounselorDto => {
       assignedTests,
       satisfactionScore: satisfactionScore ?? 0,
       feedbackCount,
+      overallScore: evaluation.overallScore,
+      hrCompliance,
       kpis,
     },
   };

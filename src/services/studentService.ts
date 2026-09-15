@@ -9,12 +9,10 @@ import type {
   UpdateStudentInput,
 } from '../types/student.js';
 import { AppError } from '../utils/appError.js';
+import { toDateOnly } from '../utils/dateOnly.js';
 
 const toIso = (value: Date | string | null): string | null =>
   value === null ? null : new Date(value).toISOString();
-
-const toDateOnly = (value: Date | string | null): string | null =>
-  value === null ? null : new Date(value).toISOString().slice(0, 10);
 
 const mapStudent = (row: StudentRow): StudentDto => ({
   id: row.student_id,
@@ -26,6 +24,8 @@ const mapStudent = (row: StudentRow): StudentDto => ({
   email: row.email,
   dateOfBirth: toDateOnly(row.date_of_birth),
   status: row.status.toUpperCase() as StudentStatus,
+  schoolLevel: row.school_level,
+  schoolName: row.school_name,
   schoolId: row.school_id,
   addressId: row.address_id,
   assignedCounselorId: row.assigned_counselor_id,
@@ -87,6 +87,17 @@ export class StudentService implements StudentServicePort {
       return { student: mapStudent(await this.repository.create(input, scope)), created: true };
     }
 
+    if (input.status === 'INACTIVE') {
+      if (!await this.repository.deactivate(existing.student_id, scope)) {
+        throw new AppError(404, 'Student could not be synchronized.', 'STUDENT_NOT_FOUND');
+      }
+      const deactivated = await this.repository.getById(existing.student_id, scope);
+      if (!deactivated) {
+        throw new AppError(404, 'Student could not be synchronized.', 'STUDENT_NOT_FOUND');
+      }
+      return { student: mapStudent(deactivated), created: false };
+    }
+
     const updated = await this.repository.update(existing.student_id, {
       firstName: input.firstName,
       lastName: input.lastName,
@@ -94,7 +105,9 @@ export class StudentService implements StudentServicePort {
       phoneNumber: input.phoneNumber,
       email: input.email ?? null,
       dateOfBirth: input.dateOfBirth ?? null,
-      status: 'ACTIVE',
+      status: input.status,
+      schoolLevel: input.schoolLevel ?? null,
+      schoolName: input.schoolName ?? null,
       schoolId: input.schoolId ?? null,
       addressId: input.addressId ?? null,
     }, scope);

@@ -1,5 +1,8 @@
-// Load .env before validating configuration and opening the PostgreSQL connection.
-import 'dotenv/config';
+// Load shared settings first, then allow ignored local credentials to override them.
+import { config as loadDotEnv } from 'dotenv';
+
+loadDotEnv();
+loadDotEnv({ path: '.env.local', override: true });
 import { createApp } from './app.js';
 import { loadConfig } from './config/env.js';
 import { createDatabaseHealthCheck } from './database/health.js';
@@ -37,7 +40,7 @@ const accounts = [
   },
 ];
 const app = createApp({
-  authService: new AuthService(accounts, config.jwtSecret, counselorAccountRepository),
+  authService: new AuthService(accounts, config.jwtSecret),
   counselorService,
   counselorAccountService: new CounselorAccountService(counselorAccountRepository),
   dashboardService: new DashboardService(counselorRepository, counselorService),

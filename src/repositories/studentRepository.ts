@@ -25,13 +25,16 @@ SELECT
     s.email,
     s.date_of_birth,
     s.status,
+    s.school_level,
     s.school_id,
+    school.school_name,
     s.address_id,
     assigned.counselor_id AS assigned_counselor_id,
     assigned.counselor_name AS assigned_counselor_name,
     s.created_at,
     s.updated_at
 FROM Students s
+LEFT JOIN Schools school ON school.school_id = s.school_id
 LEFT JOIN LATERAL (
     SELECT
         car.counselor_id,
@@ -88,8 +91,9 @@ SET
     email = CASE WHEN $12::BOOLEAN THEN $13::VARCHAR ELSE email END,
     date_of_birth = CASE WHEN $14::BOOLEAN THEN $15::DATE ELSE date_of_birth END,
     status = CASE WHEN $16::BOOLEAN THEN $17::VARCHAR ELSE status END,
-    school_id = CASE WHEN $18::BOOLEAN THEN $19::UUID ELSE school_id END,
-    address_id = CASE WHEN $20::BOOLEAN THEN $21::UUID ELSE address_id END,
+    school_level = CASE WHEN $18::BOOLEAN THEN $19::VARCHAR ELSE school_level END,
+    school_id = CASE WHEN $20::BOOLEAN THEN $21::UUID ELSE school_id END,
+    address_id = CASE WHEN $22::BOOLEAN THEN $23::UUID ELSE address_id END,
     updated_at = now()
 WHERE s.student_id = $3::UUID
   AND ${accessCondition}
@@ -103,6 +107,33 @@ const scopeValues = (scope: StudentAccessScope): [string, string | null] => [
   scope.role,
   scope.counselorId,
 ];
+
+const resolveSchoolId = async (
+  client: PoolClient,
+  schoolId: string | null | undefined,
+  schoolName: string | null | undefined,
+): Promise<string | null | undefined> => {
+  if (schoolId) return schoolId;
+  const normalizedName = schoolName?.trim();
+  if (!normalizedName) return schoolId;
+
+  await client.query('SELECT pg_advisory_xact_lock(hashtext(lower($1::TEXT)))', [normalizedName]);
+  const existing = await client.query<{ school_id: string }>(`
+    SELECT school_id
+    FROM Schools
+    WHERE LOWER(TRIM(school_name)) = LOWER(TRIM($1::VARCHAR))
+    ORDER BY created_at
+    LIMIT 1
+  `, [normalizedName]);
+  if (existing.rows[0]) return existing.rows[0].school_id;
+
+  const created = await client.query<{ school_id: string }>(`
+    INSERT INTO Schools (school_name)
+    VALUES ($1::VARCHAR)
+    RETURNING school_id
+  `, [normalizedName]);
+  return created.rows[0].school_id;
+};
 
 export class PgStudentRepository implements StudentRepositoryPort {
   constructor(private readonly pool: Pool) {}
@@ -132,12 +163,13 @@ export class PgStudentRepository implements StudentRepositoryPort {
     const client = await this.pool.connect();
     try {
       await client.query('BEGIN');
+      const resolvedSchoolId = await resolveSchoolId(client, input.schoolId, input.schoolName);
       const created = await client.query<{ student_id: string }>(`
         INSERT INTO Students (
           first_name, last_name, gender, phone_number, email,
-          date_of_birth, status, school_id, address_id
+          date_of_birth, status, school_level, school_id, address_id
         )
-        VALUES ($1, $2, $3, $4, $5, $6::DATE, $7, $8::UUID, $9::UUID)
+        VALUES ($1, $2, $3, $4, $5, $6::DATE, $7, $8, $9::UUID, $10::UUID)
         RETURNING student_id
       `, [
         input.firstName,
@@ -147,7 +179,8 @@ export class PgStudentRepository implements StudentRepositoryPort {
         input.email ?? null,
         input.dateOfBirth ?? null,
         input.status,
-        input.schoolId ?? null,
+        input.schoolLevel ?? null,
+        resolvedSchoolId ?? null,
         input.addressId ?? null,
       ]);
       const studentId = created.rows[0].student_id;
@@ -171,21 +204,39 @@ export class PgStudentRepository implements StudentRepositoryPort {
     input: UpdateStudentInput,
     scope: StudentAccessScope,
   ): Promise<StudentRow | null> {
-    const result = await this.pool.query(UPDATE_STUDENT_SQL, [
-      ...scopeValues(scope),
-      id,
-      hasOwn(input, 'firstName'), input.firstName ?? null,
-      hasOwn(input, 'lastName'), input.lastName ?? null,
-      hasOwn(input, 'gender'), input.gender ?? null,
-      hasOwn(input, 'phoneNumber'), input.phoneNumber ?? null,
-      hasOwn(input, 'email'), input.email ?? null,
-      hasOwn(input, 'dateOfBirth'), input.dateOfBirth ?? null,
-      hasOwn(input, 'status'), input.status ?? null,
-      hasOwn(input, 'schoolId'), input.schoolId ?? null,
-      hasOwn(input, 'addressId'), input.addressId ?? null,
-    ]);
-    if ((result.rowCount ?? 0) === 0) return null;
-    return this.getById(id, scope);
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      const hasSchoolInput = hasOwn(input, 'schoolId') || hasOwn(input, 'schoolName');
+      const resolvedSchoolId = hasSchoolInput
+        ? await resolveSchoolId(client, input.schoolId, input.schoolName)
+        : undefined;
+      const result = await client.query(UPDATE_STUDENT_SQL, [
+        ...scopeValues(scope),
+        id,
+        hasOwn(input, 'firstName'), input.firstName ?? null,
+        hasOwn(input, 'lastName'), input.lastName ?? null,
+        hasOwn(input, 'gender'), input.gender ?? null,
+        hasOwn(input, 'phoneNumber'), input.phoneNumber ?? null,
+        hasOwn(input, 'email'), input.email ?? null,
+        hasOwn(input, 'dateOfBirth'), input.dateOfBirth ?? null,
+        hasOwn(input, 'status'), input.status ?? null,
+        hasOwn(input, 'schoolLevel'), input.schoolLevel ?? null,
+        hasSchoolInput, resolvedSchoolId ?? null,
+        hasOwn(input, 'addressId'), input.addressId ?? null,
+      ]);
+      if ((result.rowCount ?? 0) === 0) {
+        await client.query('ROLLBACK');
+        return null;
+      }
+      await client.query('COMMIT');
+      return this.getById(id, scope);
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
   }
 
   async deactivate(id: string, scope: StudentAccessScope): Promise<boolean> {

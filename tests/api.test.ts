@@ -30,6 +30,9 @@ const counselorFixture = {
   status: 'ACTIVE',
   kpis: [],
   passedKpis: 0,
+  evaluableKpis: 0,
+  failedKpis: 0,
+  insufficientDataKpis: 5,
   totalKpis: 5,
   overallStatus: 'Not Pass',
 } as unknown as CounselorDto;
@@ -44,6 +47,8 @@ const studentFixture: StudentDto = {
   email: 'student@example.invalid',
   dateOfBirth: '2010-01-01',
   status: 'ACTIVE',
+  schoolLevel: 'THCS',
+  schoolName: 'Trường THCS Mẫu',
   schoolId: null,
   addressId: null,
   assignedCounselorId: COUNSELOR_ID,
@@ -269,15 +274,21 @@ test('counselor can create, update and soft-delete a student', async () => {
 
 test('Google Sheets webhook requires its secret and synchronizes Student data', async () => {
   let synchronized = false;
+  let synchronizedLevel = '';
+  let synchronizedSchool = '';
   const dependencies = createDependencies();
-  dependencies.studentService.syncFromGoogleSheets = async () => {
+  dependencies.studentService.syncFromGoogleSheets = async (input) => {
     synchronized = true;
+    synchronizedLevel = input.schoolLevel ?? '';
+    synchronizedSchool = input.schoolName ?? '';
     return { student: studentFixture, created: true };
   };
   const body = JSON.stringify({
     firstName: 'Sheet',
     lastName: 'Student',
     phoneNumber: '000-200-0001',
+    schoolLevel: 'THCS',
+    schoolName: 'Trường THCS Mẫu',
   });
   const unauthorized = await request(
     dependencies,
@@ -291,12 +302,14 @@ test('Google Sheets webhook requires its secret and synchronizes Student data', 
     '/api/integrations/google-sheets/students',
     {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'x-google-sync-secret': SYNC_SECRET },
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${SYNC_SECRET}` },
       body,
     },
   );
   assert.equal(authorized.status, 201);
   assert.equal(synchronized, true);
+  assert.equal(synchronizedLevel, 'THCS');
+  assert.equal(synchronizedSchool, 'Trường THCS Mẫu');
 });
 
 test('Google Sheets webhook synchronizes Counselor profiles', async () => {

@@ -1,7 +1,7 @@
 export type ReportingPeriod = 'this_month' | 'last_month' | 'all_time';
 export type CounselorStatus = 'ACTIVE' | 'INACTIVE' | 'ON_LEAVE';
 export type KpiComparison = 'gte' | 'lte';
-export type OverallStatus = 'Pass' | 'Not Pass';
+export type OverallStatus = 'Pass' | 'Not Pass' | 'Insufficient Data';
 
 export interface PeriodRange {
   start: Date;
@@ -18,6 +18,7 @@ export interface CreateCounselorInput {
   role?: string | null;
   specialization?: string | null;
   status: CounselorStatus;
+  fteRatio?: number;
 }
 
 export type UpdateCounselorInput = Partial<CreateCounselorInput>;
@@ -33,12 +34,20 @@ export interface CounselorProfileRow {
   role: string | null;
   specialization: string | null;
   status: CounselorStatus;
+  fte_ratio: number | string;
   created_at?: Date;
   updated_at?: Date | null;
 }
 
 export interface CounselorAnalyticsRow extends CounselorProfileRow {
   assigned_students: number | string;
+  weighted_caseload_points: number | string;
+  student_service_hours: number | string;
+  registered_workdays: number | string;
+  registered_hours: number | string;
+  max_daily_hours: number | string;
+  over_limit_days: number | string;
+  weeks_without_rest: number | string;
   completed_sessions: number | string;
   total_sessions: number | string;
   completed_bookings: number | string;
@@ -61,13 +70,35 @@ export interface KpiItem {
   targetValue: string;
   comparisonType: KpiComparison;
   unit: string;
+  weight: number;
+  score: number;
+  hardGuardrail?: boolean;
   isPassed: boolean;
   notes: string;
   evidence?: {
     numerator?: number;
     denominator?: number;
     sampleSize?: number;
+    registeredHours?: number;
+    maxDailyHours?: number;
+    overLimitDays?: number;
+    weeksWithoutRest?: number;
+    weightedCaseloadPoints?: number;
+    fteRatio?: number;
+    studentServiceHours?: number;
+    minimumSampleSize?: number;
+    averageRating?: number;
   };
+}
+
+export interface HrComplianceSummary {
+  status: 'Compliant' | 'Needs Review' | 'No Data';
+  registeredWorkdays: number;
+  registeredHours: number;
+  maxDailyHours: number;
+  overLimitDays: number;
+  weeksWithoutRest: number;
+  note: string;
 }
 
 export interface CounselorDto {
@@ -82,12 +113,18 @@ export interface CounselorDto {
   role: string | null;
   specialization: string | null;
   status: CounselorStatus;
+  fteRatio: number;
   title: string;
   department: string;
   kpis: KpiItem[];
   passedKpis: number;
+  evaluableKpis: number;
+  failedKpis: number;
+  insufficientDataKpis: number;
   totalKpis: 5;
+  overallScore: number;
   overallStatus: OverallStatus;
+  hrCompliance: HrComplianceSummary;
   relationshipSummary: {
     assignedStudents: number;
     completedBookings: number;
@@ -110,6 +147,8 @@ export interface CounselorDto {
     assignedTests: number;
     satisfactionScore: number;
     feedbackCount: number;
+    overallScore: number;
+    hrCompliance: HrComplianceSummary;
     kpis: KpiItem[];
   };
 }

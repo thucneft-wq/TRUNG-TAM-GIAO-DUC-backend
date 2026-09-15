@@ -12,7 +12,11 @@ export const createGoogleSheetsAuthMiddleware = (configuredSecret?: string): Req
     return;
   }
 
-  const providedSecret = request.header('x-google-sync-secret') ?? '';
+  const authorization = request.header('authorization') ?? '';
+  const bearerSecret = authorization.startsWith('Bearer ')
+    ? authorization.slice('Bearer '.length).trim()
+    : '';
+  const providedSecret = request.header('x-google-sync-secret') ?? bearerSecret;
   const expected = Buffer.from(configuredSecret);
   const provided = Buffer.from(providedSecret);
   if (provided.length !== expected.length || !timingSafeEqual(provided, expected)) {

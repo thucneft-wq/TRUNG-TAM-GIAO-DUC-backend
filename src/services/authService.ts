@@ -11,22 +11,17 @@ export interface AuthAccount {
   role: InternalRole;
 }
 
-export interface AuthAccountRepositoryPort {
-  findCounselorByEmail(email: string): Promise<AuthAccount | null>;
-}
-
 export class AuthService implements AuthServicePort {
   constructor(
     private readonly accounts: AuthAccount[],
     private readonly jwtSecret: string,
-    private readonly accountRepository?: AuthAccountRepositoryPort,
   ) {}
 
   async login(email: string, password: string) {
     const normalizedEmail = email.trim().toLowerCase();
-    const account = this.accounts.find((candidate) => candidate.email === normalizedEmail)
-      ?? await this.accountRepository?.findCounselorByEmail(normalizedEmail)
-      ?? null;
+    const account = this.accounts.find(
+      (candidate) => candidate.email === normalizedEmail && candidate.role === 'admin',
+    ) ?? null;
     const passwordMatches = account
       ? await bcrypt.compare(password, account.passwordHash)
       : false;
