@@ -132,6 +132,9 @@ test('Admin KPI query follows the official formulas', () => {
   assert.match(COUNSELOR_ANALYTICS_SQL, /a\.start_time >= \$3::TIMESTAMPTZ/);
   assert.match(COUNSELOR_ANALYTICS_SQL, /registered_hours > 8/);
   assert.match(COUNSELOR_ANALYTICS_SQL, /registered_workdays > 6/);
+  assert.match(COUNSELOR_ANALYTICS_SQL, /INTERVAL '1 hour'/);
+  assert.match(COUNSELOR_ANALYTICS_SQL, /max_session_hours/);
+  assert.match(COUNSELOR_ANALYTICS_SQL, /over_limit_sessions/);
   assert.match(COUNSELOR_ANALYTICS_SQL, /student_service_hours/);
   assert.match(COUNSELOR_ANALYTICS_SQL, /NO_SHOW_STUDENT/);
   assert.match(COUNSELOR_ANALYTICS_SQL, /'DECLINED', 'WITHDRAWN', 'NOT_REQUIRED'/);
@@ -319,7 +322,7 @@ const analyticsRow: CounselorAnalyticsRow = {
   student_service_hours: 166.4,
   registered_workdays: 26,
   registered_hours: 208,
-  max_daily_hours: 8,
+  max_daily_hours: 1,
   over_limit_days: 0,
   weeks_without_rest: 0,
   completed_sessions: 4,

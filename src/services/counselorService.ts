@@ -60,8 +60,10 @@ export const mapAnalyticsRow = (row: CounselorAnalyticsRow): CounselorDto => {
   const studentServiceHours = toNumber(row.student_service_hours) ?? 0;
   const registeredWorkdays = toCount(row.registered_workdays);
   const registeredHours = toNumber(row.registered_hours) ?? 0;
-  const maxDailyHours = toNumber(row.max_daily_hours) ?? 0;
-  const overLimitDays = toCount(row.over_limit_days);
+  // The legacy DTO field names are retained for frontend compatibility, but
+  // these values now represent maximum session duration and sessions over 1h.
+  const maxSessionHours = toNumber(row.max_daily_hours) ?? 0;
+  const overLimitSessions = toCount(row.over_limit_days);
   const weeksWithoutRest = toCount(row.weeks_without_rest);
   const completedSessions = toCount(row.completed_sessions);
   const totalSessions = toCount(row.total_sessions);
@@ -142,15 +144,15 @@ export const mapAnalyticsRow = (row: CounselorAnalyticsRow): CounselorDto => {
   const hrCompliance = {
     status: registeredWorkdays === 0
       ? 'No Data' as const
-      : overLimitDays === 0 && weeksWithoutRest === 0
+      : overLimitSessions === 0 && weeksWithoutRest === 0
         ? 'Compliant' as const
         : 'Needs Review' as const,
     registeredWorkdays,
     registeredHours,
-    maxDailyHours,
-    overLimitDays,
+    maxDailyHours: maxSessionHours,
+    overLimitDays: overLimitSessions,
     weeksWithoutRest,
-    note: 'HR attendance is reported separately from professional KPI scoring. Expected contracted hours, holidays and approved leave are not available in the current schema.',
+    note: 'Mỗi ca tư vấn được giới hạn tối đa 1 giờ. Chấm công HR được theo dõi riêng và không ảnh hưởng đến 4 KPI hiệu suất.',
   };
 
   return {

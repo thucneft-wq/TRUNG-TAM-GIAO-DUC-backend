@@ -87,6 +87,16 @@ WITH counselor_scope AS (
         COUNT(s.session_id) FILTER (
             WHERE UPPER(s.status) = 'COMPLETED'
         )::INT AS completed_sessions,
+        ROUND(COALESCE(MAX(
+            EXTRACT(EPOCH FROM (
+                COALESCE(s.ended_at, b.end_time) - COALESCE(s.started_at, b.start_time)
+            )) / 3600.0
+        ) FILTER (WHERE UPPER(s.status) = 'COMPLETED'), 0), 2) AS max_session_hours,
+        COUNT(s.session_id) FILTER (
+            WHERE UPPER(s.status) = 'COMPLETED'
+              AND COALESCE(s.ended_at, b.end_time) - COALESCE(s.started_at, b.start_time)
+                  > INTERVAL '1 hour'
+        )::INT AS over_limit_sessions,
         ROUND(COALESCE(SUM(
             EXTRACT(EPOCH FROM (
                 COALESCE(s.ended_at, b.end_time) - COALESCE(s.started_at, b.start_time)
@@ -165,8 +175,10 @@ SELECT
     COALESCE(ss.student_service_hours, 0)::NUMERIC AS student_service_hours,
     COALESCE(av.registered_workdays, 0)::INT AS registered_workdays,
     COALESCE(av.registered_hours, 0)::NUMERIC AS registered_hours,
-    COALESCE(av.max_daily_hours, 0)::NUMERIC AS max_daily_hours,
-    COALESCE(av.over_limit_days, 0)::INT AS over_limit_days,
+    -- Preserve the existing API field names while reporting the new
+    -- one-hour-per-session safety limit.
+    COALESCE(ss.max_session_hours, 0)::NUMERIC AS max_daily_hours,
+    COALESCE(ss.over_limit_sessions, 0)::INT AS over_limit_days,
     COALESCE(ars.weeks_without_rest, 0)::INT AS weeks_without_rest,
     COALESCE(ss.completed_sessions, 0)::INT AS completed_sessions,
     COALESCE(ss.total_sessions, 0)::INT AS total_sessions,
