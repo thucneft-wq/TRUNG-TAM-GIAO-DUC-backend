@@ -312,6 +312,32 @@ test('Google Sheets webhook requires its secret and synchronizes Student data', 
   assert.equal(synchronizedSchool, 'Trường THCS Mẫu');
 });
 
+test('health check is available at both the canonical path and its root alias', async () => {
+  const canonicalResponse = await request(createDependencies(), '/api/health');
+  assert.equal(canonicalResponse.status, 200);
+  assert.deepEqual(await canonicalResponse.json(), { status: 'ok', database: 'connected' });
+
+  const aliasResponse = await request(createDependencies(), '/health');
+  assert.equal(aliasResponse.status, 200);
+  assert.deepEqual(await aliasResponse.json(), { status: 'ok', database: 'connected' });
+});
+
+test('Swagger UI and its OpenAPI document describe the live API routes', async () => {
+  const documentResponse = await request(createDependencies(), '/api/docs/openapi.json');
+  assert.equal(documentResponse.status, 200);
+  const document = await documentResponse.json();
+  assert.equal(document.openapi, '3.0.3');
+  assert.ok(document.paths['/api/health']);
+  assert.ok(document.paths['/api/auth/login']);
+  assert.ok(document.paths['/api/admin/counselors']);
+  assert.ok(document.paths['/api/students']);
+
+  const uiResponse = await request(createDependencies(), '/api/docs');
+  assert.equal(uiResponse.status, 200);
+  assert.match(uiResponse.headers.get('content-type') ?? '', /^text\/html/);
+  assert.match(await uiResponse.text(), /SwaggerUIBundle/);
+});
+
 test('Google Sheets webhook synchronizes Counselor profiles', async () => {
   let synchronized = false;
   const dependencies = createDependencies();

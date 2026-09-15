@@ -51,6 +51,15 @@ Unit tests use mocked repositories and do not require PostgreSQL. A successful u
 test run is not a live database integration test. See `../docs/API_CONTRACT.md` and
 `../docs/DEPLOYMENT.md` for the complete contract and deployment procedure.
 
+## API health and Swagger
+
+- Database health: `GET /api/health` (canonical) or `GET /health` (deployment-friendly alias).
+- Swagger UI: `GET /api/docs`.
+- OpenAPI 3.0 JSON: `GET /api/docs/openapi.json`.
+
+In Swagger UI, call `POST /api/auth/login`, copy the returned JWT, click **Authorize**,
+and paste the token into `bearerAuth` before testing protected routes.
+
 ## Google Sheet → PostgreSQL Student sync
 
 The API receives normalized Student rows at

@@ -11,6 +11,7 @@ import { createAuthenticateMiddleware, requireRole } from './middleware/authenti
 import { errorHandler, notFoundHandler } from './middleware/errorHandler.js';
 import { createAdminRouter } from './routes/adminRoutes.js';
 import { createAuthRouter } from './routes/authRoutes.js';
+import { createDocsRouter } from './routes/docsRoutes.js';
 import { createHealthRouter } from './routes/healthRoutes.js';
 import { createIntegrationRouter } from './routes/integrationRoutes.js';
 import { createStudentRouter } from './routes/studentRoutes.js';
@@ -80,7 +81,8 @@ export const createApp = (dependencies: AppDependencies): Express => {
     });
   });
 
-  app.use('/api/health', createHealthRouter(healthController));
+  app.use('/api/docs', createDocsRouter());
+  app.use(['/health', '/api/health'], createHealthRouter(healthController));
   app.use('/api/auth', createAuthRouter(authController));
   app.use(
     '/api/integrations',
