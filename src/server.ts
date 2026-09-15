@@ -3,7 +3,7 @@ import { config as loadDotEnv } from 'dotenv';
 
 loadDotEnv();
 loadDotEnv({ path: '.env.local', override: true });
-import { createApp } from './app.js';
+import { createApp } from './application.js';
 import { loadConfig } from './config/env.js';
 import { createDatabaseHealthCheck } from './database/health.js';
 import { createDatabasePool } from './database/pool.js';
@@ -56,6 +56,8 @@ const app = createApp({
 const server = app.listen(config.port, () => {
   console.log(`Digital Twin Backend listening on http://localhost:${config.port}`);
 });
+
+export default app;
 
 const shutdown = (signal: string) => {
   console.log(`${signal} received; shutting down.`);

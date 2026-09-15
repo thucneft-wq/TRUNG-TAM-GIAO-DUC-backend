@@ -3,7 +3,7 @@ import { once } from 'node:events';
 import test from 'node:test';
 import type { AddressInfo } from 'node:net';
 import jwt from 'jsonwebtoken';
-import { createApp, type AppDependencies } from '../src/app.js';
+import { createApp, type AppDependencies } from '../src/application.js';
 import type { CounselorDto } from '../src/types/counselor.js';
 import type { StudentDto } from '../src/types/student.js';
 
