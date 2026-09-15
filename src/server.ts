@@ -1,5 +1,6 @@
 // Load shared settings first, then allow ignored local credentials to override them.
 import { config as loadDotEnv } from 'dotenv';
+import express from 'express';
 
 loadDotEnv();
 loadDotEnv({ path: '.env.local', override: true });
@@ -17,6 +18,9 @@ import { CounselorService } from './services/counselorService.js';
 import { CounselorAccountService } from './services/counselorAccountService.js';
 import { DashboardService } from './services/dashboardService.js';
 import { StudentService } from './services/studentService.js';
+
+// Keep a direct runtime import so Vercel recognizes this file as the Express entrypoint.
+void express;
 
 const config = loadConfig();
 const pool = createDatabasePool(config.databaseUrl);
