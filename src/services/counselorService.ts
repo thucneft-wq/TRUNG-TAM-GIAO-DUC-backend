@@ -152,7 +152,7 @@ export const mapAnalyticsRow = (row: CounselorAnalyticsRow): CounselorDto => {
     maxDailyHours: maxSessionHours,
     overLimitDays: overLimitSessions,
     weeksWithoutRest,
-    note: 'Mỗi ca tư vấn tối đa 1 giờ. Các ca vượt giới hạn sẽ được ghi nhận riêng.',
+    note: 'Chấm công HR được theo dõi riêng và không ảnh hưởng đến 4 KPI hiệu suất hoặc điều kiện an toàn tải ca.',
   };
 
   return {
