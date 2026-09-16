@@ -46,7 +46,7 @@ function handleFeedbackFormSubmit(event) {
 function handleFeedbackEdit(event) {
   if (!event || !event.range || event.range.getRow() <= 1) return;
   const sheet = event.range.getSheet();
-  if (!isFeedbackSheet_(sheet.getName())) return;
+  if (!isFeedbackSheet_(sheet)) return;
   const firstRow = event.range.getRow();
   const lastRow = firstRow + event.range.getNumRows() - 1;
   for (let row = firstRow; row <= lastRow; row += 1) {
@@ -68,7 +68,7 @@ function syncAllFeedback() {
 }
 
 function syncFeedbackRow_(sheet, rowNumber) {
-  if (!isFeedbackSheet_(sheet.getName()) || rowNumber <= 1) return false;
+  if (!isFeedbackSheet_(sheet) || rowNumber <= 1) return false;
   const columnCount = sheet.getLastColumn();
   const headers = sheet.getRange(1, 1, 1, columnCount).getDisplayValues()[0];
   const rawValues = sheet.getRange(rowNumber, 1, 1, columnCount).getValues()[0];
@@ -143,11 +143,27 @@ function postFeedback_(payload) {
   }
 }
 
-function isFeedbackSheet_(sheetName) {
-  const normalized = normalizeFeedbackHeader_(sheetName);
-  return FEEDBACK_SYNC_SHEETS_.some(function(name) {
+function isFeedbackSheet_(sheet) {
+  const normalized = normalizeFeedbackHeader_(sheet.getName());
+  const namedFeedbackSheet = FEEDBACK_SYNC_SHEETS_.some(function(name) {
     return normalizeFeedbackHeader_(name) === normalized;
   }) || normalized.indexOf('phan hoi') !== -1;
+  if (namedFeedbackSheet) return true;
+
+  if (normalized.indexOf('form responses') !== 0 && normalized.indexOf('form_responses') !== 0) {
+    return false;
+  }
+  const headers = sheet
+    .getRange(1, 1, 1, sheet.getLastColumn())
+    .getDisplayValues()[0]
+    .map(normalizeFeedbackHeader_)
+    .join('|');
+  const hasBookingReference = headers.indexOf('booking') !== -1 || headers.indexOf('ma lich hen') !== -1;
+  const hasRating = headers.indexOf('rating') !== -1 ||
+    headers.indexOf('danh gia') !== -1 ||
+    headers.indexOf('muc do hai long') !== -1 ||
+    headers.indexOf('phan hoi') !== -1;
+  return hasBookingReference && hasRating;
 }
 
 function feedbackValue_(values, aliases) {
