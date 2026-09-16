@@ -48,6 +48,28 @@ export const googleSheetsFeedbackSchema = z.object({
   feedbackId: optionalUuid,
   sessionId: optionalUuid,
   bookingId: optionalUuid,
+  externalSessionId: optionalExternalId,
+  externalBookingId: optionalExternalId,
+  externalStudentId: optionalExternalId,
+  externalCounselorId: optionalExternalId,
+  bookingStartTime: z.preprocess(
+    (value) => value === '' || value === null ? undefined : value,
+    z.iso.datetime({ offset: true }).optional(),
+  ),
+  bookingEndTime: z.preprocess(
+    (value) => value === '' || value === null ? undefined : value,
+    z.iso.datetime({ offset: true }).optional(),
+  ),
+  bookingStatus: z.string().trim().min(1).max(30).optional(),
+  sessionStartedAt: z.preprocess(
+    (value) => value === '' || value === null ? undefined : value,
+    z.iso.datetime({ offset: true }).optional(),
+  ),
+  sessionEndedAt: z.preprocess(
+    (value) => value === '' || value === null ? undefined : value,
+    z.iso.datetime({ offset: true }).optional(),
+  ),
+  sessionStatus: z.string().trim().min(1).max(30).optional(),
   rating: z.coerce.number().int().min(1).max(5),
   comment: z.preprocess(
     (value) => value === '' || value === null ? undefined : value,
@@ -62,8 +84,21 @@ export const googleSheetsFeedbackSchema = z.object({
     z.iso.datetime({ offset: true }).optional(),
   ),
 }).strict().refine(
-  (value) => Boolean(value.sessionId || value.bookingId),
-  { message: 'Provide sessionId or bookingId.', path: ['sessionId'] },
+  (value) => Boolean(
+    value.sessionId || value.bookingId || value.externalSessionId || value.externalBookingId
+  ),
+  { message: 'Provide an internal or external session/booking identifier.', path: ['sessionId'] },
+).refine(
+  (value) => !value.externalBookingId || Boolean(
+    value.externalStudentId
+    && value.externalCounselorId
+    && value.bookingStartTime
+    && value.bookingEndTime
+  ),
+  {
+    message: 'External booking sync requires Student/Counselor IDs and booking times.',
+    path: ['externalBookingId'],
+  },
 );
 
 export const googleSheetsAssignmentSchema = z.object({

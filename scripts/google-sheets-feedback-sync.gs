@@ -14,6 +14,7 @@
 const FEEDBACK_SYNC_SHEETS_ = Object.freeze([
   'Phản hồi sau phiên tư vấn',
 ]);
+const FEEDBACK_SYNC_STATUS_HEADER_ = 'Trạng thái đồng bộ';
 
 function installFeedbackSyncTriggers() {
   const spreadsheet = SpreadsheetApp.getActive();
@@ -100,20 +101,48 @@ function syncFeedbackRow_(sheet, rowNumber) {
   const timestamp = feedbackValue_(values, [
     'timestamp', 'dau thoi gian', 'dấu thời gian', 'created_at',
   ]);
+  const booking = bookingId ? feedbackFindEntityRow_('bookings', 'booking_id', bookingId) : null;
+  const session = bookingId ? feedbackFindEntityRow_('sessions', 'booking_id', bookingId) : null;
+  const useful = feedbackValue_(values, ['Điều bạn thấy hữu ích nhất']);
+  const note = feedbackValue_(values, ['Nhận xét hoặc góp ý thêm']);
+  const comment = [useful ? `Hữu ích nhất: ${useful}` : '', note ? `Nhận xét: ${note}` : '']
+    .filter(Boolean)
+    .join('\n');
   const payload = {
     feedbackId: feedbackValue_(values, ['feedback id', 'feedback_id', 'ma feedback', 'mã feedback']) || undefined,
-    bookingId: bookingId || undefined,
-    sessionId: sessionId || undefined,
+    bookingId: feedbackIsUuid_(bookingId) ? bookingId : undefined,
+    sessionId: feedbackIsUuid_(sessionId) ? sessionId : undefined,
+    externalBookingId: bookingId && !feedbackIsUuid_(bookingId) ? bookingId : undefined,
+    externalSessionId: sessionId && !feedbackIsUuid_(sessionId)
+      ? sessionId
+      : (session && session.session_id) || undefined,
+    externalStudentId: booking && booking.student_id || undefined,
+    externalCounselorId: booking && booking.counselor_id || undefined,
+    bookingStartTime: normalizeFeedbackTimestamp_(booking && booking.start_time) || undefined,
+    bookingEndTime: normalizeFeedbackTimestamp_(booking && booking.end_time) || undefined,
+    bookingStatus: booking && booking.status || undefined,
+    sessionStartedAt: normalizeFeedbackTimestamp_(session && session.started_at) || undefined,
+    sessionEndedAt: normalizeFeedbackTimestamp_(session && session.ended_at) || undefined,
+    sessionStatus: session && session.status || undefined,
     rating: rating,
-    comment: feedbackValue_(values, [
+    comment: comment || feedbackValue_(values, [
       'comment', 'phan hoi', 'y kien phan hoi', 'nhan xet', 'gop y',
       'phản hồi', 'ý kiến phản hồi', 'nhận xét', 'góp ý',
     ]) || undefined,
-    category: feedbackValue_(values, ['category', 'phan loai', 'phân loại']) || undefined,
+    category: feedbackValue_(values, ['category', 'phan loai', 'phân loại']) || 'form',
     createdAt: normalizeFeedbackTimestamp_(timestamp) || undefined,
   };
-  postFeedback_(payload);
-  return true;
+  Object.keys(payload).forEach(function(key) {
+    if (payload[key] === undefined || payload[key] === null || payload[key] === '') delete payload[key];
+  });
+  try {
+    postFeedback_(payload);
+    mvpSetCellByHeader_(sheet, rowNumber, FEEDBACK_SYNC_STATUS_HEADER_, mvpSyncTimestamp_('Đã đồng bộ'));
+    return true;
+  } catch (error) {
+    mvpSetCellByHeader_(sheet, rowNumber, FEEDBACK_SYNC_STATUS_HEADER_, `Lỗi: ${error.message}`);
+    throw error;
+  }
 }
 
 function postFeedback_(payload) {
@@ -168,10 +197,38 @@ function isFeedbackSheet_(sheet) {
 
 function feedbackValue_(values, aliases) {
   for (const alias of aliases) {
-    const value = values[normalizeFeedbackHeader_(alias)];
+    const normalizedAlias = normalizeFeedbackHeader_(alias);
+    const compactAlias = normalizedAlias.replace(/[^a-z0-9]/g, '');
+    const key = Object.keys(values).find(function(candidate) {
+      const compactCandidate = candidate.replace(/[^a-z0-9]/g, '');
+      return candidate === normalizedAlias
+        || compactCandidate === compactAlias
+        || candidate.indexOf(normalizedAlias) === 0;
+    });
+    const value = key ? values[key] : undefined;
     if (value !== undefined && value !== null && String(value).trim() !== '') return value;
   }
   return '';
+}
+
+function feedbackFindEntityRow_(sheetName, idHeader, idValue) {
+  const sheet = SpreadsheetApp.getActive().getSheetByName(sheetName);
+  if (!sheet || sheet.getLastRow() <= 1) return null;
+  const values = sheet.getDataRange().getValues();
+  const headers = values[0].map(function(header) { return String(header || '').trim(); });
+  const idIndex = headers.indexOf(idHeader);
+  if (idIndex < 0) return null;
+  const row = values.slice(1).find(function(candidate) {
+    return String(candidate[idIndex] || '').trim() === String(idValue || '').trim();
+  });
+  return row ? Object.fromEntries(headers.map(function(header, index) {
+    return [header, row[index]];
+  })) : null;
+}
+
+function feedbackIsUuid_(value) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+    .test(String(value || '').trim());
 }
 
 function parseFeedbackRating_(value) {

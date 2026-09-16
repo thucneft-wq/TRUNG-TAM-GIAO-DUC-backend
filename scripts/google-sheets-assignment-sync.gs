@@ -86,7 +86,7 @@ function syncAllExternalEntityIds_() {
       phoneNumber,
       email: assignmentNull_(row.email),
       dateOfBirth: assignmentDateOnly_(row.date_of_birth),
-      status: assignmentNormalize_(row.status) === 'active' ? 'ACTIVE' : 'INACTIVE',
+      status: assignmentStudentEntityStatus_(row.status),
       schoolLevel: Number.isFinite(gradeLevel) ? (gradeLevel <= 9 ? 'THCS' : 'THPT') : null,
       schoolName: assignmentNull_(row.school_name),
     });
@@ -109,7 +109,7 @@ function syncAllExternalEntityIds_() {
       dateOfBirth: assignmentDateOnly_(row.date_of_birth),
       role: assignmentNull_(row.role) || 'counselor',
       specialization: assignmentNull_(row.specialization),
-      status: assignmentNormalize_(row.status) === 'active' ? 'ACTIVE' : 'INACTIVE',
+      status: assignmentCounselorEntityStatus_(row.status),
     });
   }
 }
@@ -207,6 +207,18 @@ function assignmentIsoDate_(value) {
   }
   const parsed = new Date(value);
   return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString();
+}
+
+function assignmentStudentEntityStatus_(value) {
+  const normalized = assignmentNormalize_(value);
+  if (normalized === 'completed' || normalized === 'đã hoàn thành') return 'COMPLETED';
+  return normalized === 'active' || normalized === 'đang hoạt động' ? 'ACTIVE' : 'INACTIVE';
+}
+
+function assignmentCounselorEntityStatus_(value) {
+  const normalized = assignmentNormalize_(value);
+  if (normalized === 'on_leave' || normalized === 'tạm nghỉ') return 'ON_LEAVE';
+  return normalized === 'active' || normalized === 'đang hoạt động' ? 'ACTIVE' : 'INACTIVE';
 }
 
 function assignmentDateOnly_(value) {

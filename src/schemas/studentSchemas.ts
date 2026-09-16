@@ -26,8 +26,25 @@ export const createStudentSchema = z.object({
   counselorId: nullableUuid,
 }).strict();
 
+/**
+ * Schema for student data arriving from Google Sheets / bot form.
+ * Defaults to PENDING_REVIEW so that new registrations always need Admin approval
+ * before a counselor is automatically assigned.
+ */
+export const googleSheetsStudentSchema = createStudentSchema.extend({
+  status: z.enum(['PENDING_REVIEW', 'ACTIVE', 'INACTIVE']).default('PENDING_REVIEW'),
+});
+
 export const updateStudentSchema = createStudentSchema
   .omit({ counselorId: true })
   .partial()
   .strict()
   .refine((value) => Object.keys(value).length > 0, 'At least one allowed field is required.');
+
+/**
+ * Admin approves a PENDING_REVIEW student → ACTIVE.
+ * Optionally override the auto-assigned counselor by providing counselorId.
+ */
+export const approveStudentSchema = z.object({
+  counselorId: nullableUuid,
+}).strict();

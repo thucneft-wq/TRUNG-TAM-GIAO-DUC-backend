@@ -22,8 +22,14 @@ export interface StudentRepositoryPort {
   deactivate(
     id: string,
     scope: StudentAccessScope,
-    status?: 'COMPLETED' | 'INACTIVE',
+    status?: 'COMPLETED' | 'INACTIVE' | 'REJECTED',
   ): Promise<boolean>;
+  /** Ensure the student already has an active assignment, or auto-assign the least-loaded counselor. */
+  ensureAutomaticAssignment(studentId: string): Promise<boolean>;
+  /** Promote a PENDING_REVIEW student to ACTIVE and optionally assign a specific counselor. */
+  approve(studentId: string, counselorId?: string | null): Promise<boolean>;
+  /** Soft-reject a PENDING_REVIEW student (status → REJECTED). */
+  reject(studentId: string): Promise<boolean>;
   syncAssignment(input: GoogleSheetsAssignmentInput): Promise<StudentAssignmentSyncResult>;
 }
 
@@ -89,11 +95,20 @@ const accessCondition = `
 )
 `;
 
+/**
+ * Admins see both PENDING_REVIEW (new from bot/form) and ACTIVE students.
+ * Counselors only see ACTIVE students assigned to them.
+ * PENDING_REVIEW rows sort first so the review queue is always visible at the top.
+ */
 const LIST_STUDENTS_SQL = `
 ${STUDENT_SELECT}
-WHERE ($1::TEXT = 'admin' OR UPPER(s.status) = 'ACTIVE')
-  AND ${accessCondition}
-ORDER BY s.last_name, s.first_name
+WHERE (
+  ($1::TEXT = 'admin' AND UPPER(s.status) IN ('ACTIVE', 'PENDING_REVIEW'))
+  OR (UPPER(s.status) = 'ACTIVE' AND ${accessCondition})
+)
+ORDER BY
+  CASE UPPER(s.status) WHEN 'PENDING_REVIEW' THEN 0 ELSE 1 END,
+  s.last_name, s.first_name
 `;
 
 const GET_STUDENT_SQL = `
@@ -481,6 +496,110 @@ export class PgStudentRepository implements StudentRepositoryPort {
     } finally {
       client.release();
     }
+  }
+
+  async ensureAutomaticAssignment(studentId: string): Promise<boolean> {
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query('SELECT pg_advisory_xact_lock(hashtext($1::TEXT))', [studentId]);
+
+      const student = await client.query<{ student_id: string }>(`
+        SELECT student_id FROM Students
+        WHERE student_id = $1::UUID AND UPPER(status) = 'ACTIVE'
+        FOR UPDATE
+      `, [studentId]);
+      if (!student.rows[0]) {
+        await client.query('COMMIT');
+        return false;
+      }
+
+      const current = await client.query<{ assignment_id: string }>(`
+        SELECT ca.assignment_id
+        FROM Counselor_Assignments ca
+        JOIN Counselor_Assignment_Records car ON car.assignment_id = ca.assignment_id
+        WHERE ca.student_id = $1::UUID
+          AND UPPER(ca.status) = 'ACTIVE'
+          AND UPPER(car.status) = 'ACTIVE'
+          AND car.ended_at IS NULL
+        LIMIT 1
+      `, [studentId]);
+      if (current.rows[0]) {
+        await client.query('COMMIT');
+        return false;
+      }
+
+      const counselor = await client.query<{ counselor_id: string }>(`
+        SELECT c.counselor_id
+        FROM Counselors c
+        LEFT JOIN (
+          SELECT car.counselor_id, COUNT(*)::INT AS active_cases
+          FROM Counselor_Assignment_Records car
+          JOIN Counselor_Assignments ca ON ca.assignment_id = car.assignment_id
+          WHERE UPPER(car.status) = 'ACTIVE'
+            AND car.ended_at IS NULL
+            AND UPPER(ca.status) = 'ACTIVE'
+          GROUP BY car.counselor_id
+        ) load ON load.counselor_id = c.counselor_id
+        WHERE UPPER(c.status) = 'ACTIVE'
+        ORDER BY COALESCE(load.active_cases, 0), c.created_at, c.counselor_id
+        LIMIT 1
+        FOR UPDATE OF c SKIP LOCKED
+      `);
+      if (!counselor.rows[0]) {
+        await client.query('COMMIT');
+        return false;
+      }
+
+      await this.assignStudent(client, studentId, counselor.rows[0].counselor_id);
+      await client.query('COMMIT');
+      return true;
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  async approve(studentId: string, counselorId?: string | null): Promise<boolean> {
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query('SELECT pg_advisory_xact_lock(hashtext($1::TEXT))', [studentId]);
+
+      const result = await client.query<{ student_id: string }>(`
+        UPDATE Students
+        SET status = 'ACTIVE', updated_at = now()
+        WHERE student_id = $1::UUID AND UPPER(status) = 'PENDING_REVIEW'
+        RETURNING student_id
+      `, [studentId]);
+      if ((result.rowCount ?? 0) === 0) {
+        await client.query('ROLLBACK');
+        return false;
+      }
+
+      if (counselorId) {
+        await this.assignStudent(client, studentId, counselorId);
+      }
+
+      await client.query('COMMIT');
+      return true;
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  async reject(studentId: string): Promise<boolean> {
+    const result = await this.pool.query(`
+      UPDATE Students
+      SET status = 'REJECTED', updated_at = now()
+      WHERE student_id = $1::UUID AND UPPER(status) = 'PENDING_REVIEW'
+    `, [studentId]);
+    return (result.rowCount ?? 0) > 0;
   }
 
   private async assignStudent(

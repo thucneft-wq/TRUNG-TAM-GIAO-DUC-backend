@@ -34,6 +34,16 @@ export interface GoogleSheetsFeedbackInput {
   feedbackId?: string;
   sessionId?: string;
   bookingId?: string;
+  externalSessionId?: string;
+  externalBookingId?: string;
+  externalStudentId?: string;
+  externalCounselorId?: string;
+  bookingStartTime?: string;
+  bookingEndTime?: string;
+  bookingStatus?: string;
+  sessionStartedAt?: string;
+  sessionEndedAt?: string;
+  sessionStatus?: string;
   rating: number;
   comment?: string | null;
   category?: string | null;

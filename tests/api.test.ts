@@ -53,7 +53,10 @@ const studentFixture: StudentDto = {
   schoolId: null,
   addressId: null,
   assignedCounselorId: COUNSELOR_ID,
+  assignedCounselorExternalId: 'TTV-01',
   assignedCounselorName: 'Dev Counselor',
+  assignmentStatus: 'ACTIVE',
+  assignmentEndedAt: null,
   createdAt: '2026-08-01T00:00:00.000Z',
   updatedAt: null,
 };

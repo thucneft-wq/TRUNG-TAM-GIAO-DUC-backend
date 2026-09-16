@@ -18,6 +18,9 @@ const STUDENT_STATUS_HEADER = 'Trạng thái';
 const STUDENT_STATUS_ACTIVE_LABEL = 'Đang hoạt động';
 const STUDENT_STATUS_COMPLETED_LABEL = 'Đã hoàn thành';
 const STUDENT_STATUS_INACTIVE_LABEL = 'Ngừng theo dõi';
+const STUDENT_EXTERNAL_ID_HEADER = 'Mã học sinh';
+const STUDENT_ASSIGNED_COUNSELOR_HEADER = 'Tư vấn viên phụ trách';
+const STUDENT_SYNC_STATUS_HEADER = 'Trạng thái đồng bộ';
 
 /**
  * Run once to add the Sheet-side soft-delete control to both student tabs.
@@ -145,20 +148,70 @@ function syncStudentRow_(sheet, rowNumber) {
   }
   const directEmail = optionalText_(row['Email nhận thông tin']);
   const responseEmail = optionalText_(row['Email Address']);
+  const externalStudentId = optionalText_(
+    row[STUDENT_EXTERNAL_ID_HEADER] || row.student_id || row['Student ID'],
+  ) || mvpEnsureExternalId_(sheet, rowNumber, STUDENT_EXTERNAL_ID_HEADER, 'HS');
+  const normalizedStatus = normalizeStudentStatus_(row[STUDENT_STATUS_HEADER]);
 
-  postStudent_({
-    externalStudentId: optionalText_(row.student_id || row['Student ID']) || null,
-    firstName,
-    lastName,
-    gender: normalizeGender_(row['Giới tính']),
-    phoneNumber,
-    email: directEmail || responseEmail || null,
-    dateOfBirth: normalizeDate_(row['Ngày sinh']),
-    status: normalizeStudentStatus_(row[STUDENT_STATUS_HEADER]),
-    schoolLevel,
-    schoolName: optionalText_(row['Tên trường']) || null,
-  });
-  return true;
+  if (!optionalText_(row[STUDENT_STATUS_HEADER])) {
+    mvpSetCellByHeader_(sheet, rowNumber, STUDENT_STATUS_HEADER, STUDENT_STATUS_ACTIVE_LABEL);
+  }
+
+  try {
+    const payload = {
+      externalStudentId,
+      firstName,
+      lastName,
+      gender: normalizeGender_(row['Giới tính']),
+      phoneNumber,
+      email: directEmail || responseEmail || null,
+      dateOfBirth: normalizeDate_(row['Ngày sinh']),
+      status: normalizedStatus,
+      schoolLevel,
+      schoolName: optionalText_(row['Tên trường']) || null,
+    };
+    const result = postStudent_(payload);
+    const counselorExternalId = optionalText_(
+      result && result.student && result.student.assignedCounselorExternalId,
+    );
+    mvpSetCellByHeader_(
+      sheet,
+      rowNumber,
+      STUDENT_ASSIGNED_COUNSELOR_HEADER,
+      counselorExternalId || 'Chưa phân công',
+    );
+    mvpSetCellByHeader_(sheet, rowNumber, STUDENT_SYNC_STATUS_HEADER, mvpSyncTimestamp_('Đã đồng bộ'));
+    mvpUpsertEntityRow_('students', 'student_id', externalStudentId, {
+      first_name: firstName,
+      last_name: lastName,
+      gender: payload.gender,
+      phone_number: phoneNumber,
+      email: payload.email,
+      date_of_birth: payload.dateOfBirth,
+      grade_level: optionalText_(row['Lớp/Khối']),
+      status: normalizedStatus.toLowerCase(),
+      school_name: payload.schoolName,
+    });
+    if (counselorExternalId) {
+      mvpUpsertAssignment_(externalStudentId, counselorExternalId, normalizedStatus);
+    }
+    if (normalizedStatus !== 'ACTIVE') {
+      mvpAppendArchive_({
+        entityType: 'STUDENT',
+        externalId: externalStudentId,
+        displayName: `${lastName} ${firstName}`.trim(),
+        sourceSheet: sheet.getName(),
+        sourceRow: rowNumber,
+        previousStatus: normalizedStatus,
+        reason: normalizedStatus === 'COMPLETED' ? 'Đã hoàn thành tư vấn' : 'Ngừng theo dõi',
+        notes: counselorExternalId ? `Tư vấn viên cuối: ${counselorExternalId}` : '',
+      });
+    }
+    return true;
+  } catch (error) {
+    mvpSetCellByHeader_(sheet, rowNumber, STUDENT_SYNC_STATUS_HEADER, `Lỗi: ${error.message}`);
+    throw error;
+  }
 }
 
 function postStudent_(payload) {
@@ -175,8 +228,10 @@ function postStudent_(payload) {
 
   const status = response.getResponseCode();
   if (status < 200 || status >= 300) {
-    throw new Error(`Backend trả về HTTP ${status}. Kiểm tra Executions trong Apps Script để xử lý.`);
+    throw new Error(`Backend trả về HTTP ${status}: ${response.getContentText()}`);
   }
+  const text = response.getContentText();
+  return text ? JSON.parse(text) : {};
 }
 
 function normalizeGender_(value) {

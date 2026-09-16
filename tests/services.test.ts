@@ -235,6 +235,7 @@ const studentRow: StudentRow = {
   school_id: null,
   address_id: null,
   assigned_counselor_id: '10000000-0000-4000-8000-000000000001',
+  assigned_counselor_external_id: 'TTV-01',
   assigned_counselor_name: 'Dev Counselor',
   created_at: '2026-08-01T00:00:00.000Z',
   updated_at: null,
@@ -247,6 +248,9 @@ const createStudentRepository = (): StudentRepositoryPort => ({
   create: async () => studentRow,
   update: async () => studentRow,
   deactivate: async () => true,
+  ensureAutomaticAssignment: async () => false,
+  approve: async () => true,
+  reject: async () => true,
 });
 
 test('student service maps only the scoped repository result', async () => {

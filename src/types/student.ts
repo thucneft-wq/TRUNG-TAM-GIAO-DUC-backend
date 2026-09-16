@@ -1,6 +1,12 @@
 import type { InternalRole } from './services.js';
 
-export const studentStatuses = ['ACTIVE', 'COMPLETED', 'INACTIVE'] as const;
+export const studentStatuses = [
+  'PENDING_REVIEW',
+  'ACTIVE',
+  'COMPLETED',
+  'INACTIVE',
+  'REJECTED',
+] as const;
 export type StudentStatus = typeof studentStatuses[number];
 export const schoolLevels = ['THCS', 'THPT'] as const;
 export type SchoolLevel = typeof schoolLevels[number];
@@ -25,6 +31,7 @@ export interface StudentRow {
   school_id: string | null;
   address_id: string | null;
   assigned_counselor_id: string | null;
+  assigned_counselor_external_id: string | null;
   assigned_counselor_name: string | null;
   assignment_status: string | null;
   assignment_ended_at: Date | string | null;
@@ -48,6 +55,7 @@ export interface StudentDto {
   schoolId: string | null;
   addressId: string | null;
   assignedCounselorId: string | null;
+  assignedCounselorExternalId: string | null;
   assignedCounselorName: string | null;
   assignmentStatus: string | null;
   assignmentEndedAt: string | null;

@@ -35,6 +35,7 @@ const mapStudent = (row: StudentRow): StudentDto => ({
   schoolId: row.school_id,
   addressId: row.address_id,
   assignedCounselorId: row.assigned_counselor_id,
+  assignedCounselorExternalId: row.assigned_counselor_external_id,
   assignedCounselorName: row.assigned_counselor_name,
   assignmentStatus: row.assignment_status,
   assignmentEndedAt: toIso(row.assignment_ended_at),
@@ -65,7 +66,9 @@ export class StudentService implements StudentServicePort {
 
   async create(input: CreateStudentInput, scope: StudentAccessScope): Promise<StudentDto> {
     validateScope(scope);
-    return mapStudent(await this.repository.create(input, scope));
+    const created = await this.repository.create(input, scope);
+    if (input.status === 'ACTIVE') await this.repository.ensureAutomaticAssignment(created.student_id);
+    return mapStudent(await this.repository.getById(created.student_id, scope) ?? created);
   }
 
   async update(
@@ -76,7 +79,8 @@ export class StudentService implements StudentServicePort {
     validateScope(scope);
     const row = await this.repository.update(id, input, scope);
     if (!row) throw new AppError(404, 'Student was not found in your access scope.', 'STUDENT_NOT_FOUND');
-    return mapStudent(row);
+    if (input.status === 'ACTIVE') await this.repository.ensureAutomaticAssignment(id);
+    return mapStudent(await this.repository.getById(id, scope) ?? row);
   }
 
   async deactivate(id: string, scope: StudentAccessScope): Promise<void> {
@@ -96,10 +100,15 @@ export class StudentService implements StudentServicePort {
       input.phoneNumber,
     );
     if (!existing) {
-      return { student: mapStudent(await this.repository.create(input, scope)), created: true };
+      const created = await this.repository.create(input, scope);
+      if (input.status === 'ACTIVE') await this.repository.ensureAutomaticAssignment(created.student_id);
+      return {
+        student: mapStudent(await this.repository.getById(created.student_id, scope) ?? created),
+        created: true,
+      };
     }
 
-    if (input.status !== 'ACTIVE') {
+    if (input.status === 'COMPLETED' || input.status === 'INACTIVE' || input.status === 'REJECTED') {
       if (!await this.repository.deactivate(existing.student_id, scope, input.status)) {
         throw new AppError(404, 'Student could not be synchronized.', 'STUDENT_NOT_FOUND');
       }
@@ -130,7 +139,11 @@ export class StudentService implements StudentServicePort {
     if (!updated) {
       throw new AppError(404, 'Student could not be synchronized.', 'STUDENT_NOT_FOUND');
     }
-    return { student: mapStudent(updated), created: false };
+    await this.repository.ensureAutomaticAssignment(existing.student_id);
+    return {
+      student: mapStudent(await this.repository.getById(existing.student_id, scope) ?? updated),
+      created: false,
+    };
   }
 
   async syncAssignmentFromGoogleSheets(
