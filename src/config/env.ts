@@ -1,5 +1,9 @@
 import { z } from 'zod';
 
+const REQUIRED_PRODUCTION_CORS_ORIGINS = [
+  'https://trung-tam-giao-duc.vercel.app',
+];
+
 const envSchema = z.object({
   PORT: z.coerce.number().int().min(1).max(65535).default(4000),
   DATABASE_URL: z.string().min(1).refine(
@@ -41,11 +45,16 @@ export interface AppConfig {
 
 export const loadConfig = (source: NodeJS.ProcessEnv = process.env): AppConfig => {
   const parsed = envSchema.parse(source);
-  const corsOrigins = parsed.CORS_ORIGINS.split(',')
+  const configuredCorsOrigins = parsed.CORS_ORIGINS.split(',')
     .map((origin) => origin.trim())
     .filter(Boolean);
 
-  if (corsOrigins.length === 0) {
+  const corsOrigins = Array.from(new Set([
+    ...configuredCorsOrigins,
+    ...REQUIRED_PRODUCTION_CORS_ORIGINS,
+  ]));
+
+  if (configuredCorsOrigins.length === 0) {
     throw new Error('CORS_ORIGINS must contain at least one origin.');
   }
 
