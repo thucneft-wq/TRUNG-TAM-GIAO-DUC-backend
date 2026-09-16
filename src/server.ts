@@ -62,19 +62,20 @@ const app = createApp({
   googleSheetsSyncSecret: config.googleSheetsSyncSecret,
   webCrudEnabled: config.webCrudEnabled,
 });
+if (!process.env.VERCEL) {
+  const server = app.listen(config.port, () => {
+    console.log(`Digital Twin Backend listening on http://localhost:${config.port}`);
+  });
 
-const server = app.listen(config.port, () => {
-  console.log(`Digital Twin Backend listening on http://localhost:${config.port}`);
-});
+  const shutdown = (signal: string) => {
+    console.log(`${signal} received; shutting down.`);
+    server.close(() => {
+      void pool.end().finally(() => process.exit(0));
+    });
+  };
+
+  process.on('SIGINT', () => shutdown('SIGINT'));
+  process.on('SIGTERM', () => shutdown('SIGTERM'));
+}
 
 export default app;
-
-const shutdown = (signal: string) => {
-  console.log(`${signal} received; shutting down.`);
-  server.close(() => {
-    void pool.end().finally(() => process.exit(0));
-  });
-};
-
-process.on('SIGINT', () => shutdown('SIGINT'));
-process.on('SIGTERM', () => shutdown('SIGTERM'));
