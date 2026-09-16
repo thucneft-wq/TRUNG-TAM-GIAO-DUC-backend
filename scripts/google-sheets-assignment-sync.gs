@@ -162,7 +162,7 @@ function assignmentPostResource_(resource, payload) {
   const response = UrlFetchApp.fetch(endpoint, {
     method: 'post',
     contentType: 'application/json',
-    headers: { Authorization: `Bearer ${secret}` },
+    headers: { 'x-google-sync-secret': secret },
     payload: JSON.stringify(payload),
     muteHttpExceptions: true,
   });
