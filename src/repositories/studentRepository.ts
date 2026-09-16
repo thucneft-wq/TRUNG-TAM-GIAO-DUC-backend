@@ -518,10 +518,12 @@ export class PgStudentRepository implements StudentRepositoryPort {
         SELECT ca.assignment_id
         FROM Counselor_Assignments ca
         JOIN Counselor_Assignment_Records car ON car.assignment_id = ca.assignment_id
+        JOIN Counselors c ON c.counselor_id = car.counselor_id
         WHERE ca.student_id = $1::UUID
           AND UPPER(ca.status) = 'ACTIVE'
           AND UPPER(car.status) = 'ACTIVE'
           AND car.ended_at IS NULL
+          AND c.external_counselor_id IS NOT NULL
         LIMIT 1
       `, [studentId]);
       if (current.rows[0]) {
@@ -542,6 +544,7 @@ export class PgStudentRepository implements StudentRepositoryPort {
           GROUP BY car.counselor_id
         ) load ON load.counselor_id = c.counselor_id
         WHERE UPPER(c.status) = 'ACTIVE'
+          AND c.external_counselor_id IS NOT NULL
         ORDER BY COALESCE(load.active_cases, 0), c.created_at, c.counselor_id
         LIMIT 1
         FOR UPDATE OF c SKIP LOCKED
@@ -551,6 +554,20 @@ export class PgStudentRepository implements StudentRepositoryPort {
         return false;
       }
 
+      await client.query(`
+        UPDATE Counselor_Assignment_Records car
+        SET status = 'INACTIVE', ended_at = COALESCE(car.ended_at, now()), updated_at = now()
+        FROM Counselor_Assignments ca
+        WHERE ca.assignment_id = car.assignment_id
+          AND ca.student_id = $1::UUID
+          AND UPPER(car.status) = 'ACTIVE'
+          AND car.ended_at IS NULL
+      `, [studentId]);
+      await client.query(`
+        UPDATE Counselor_Assignments
+        SET status = 'INACTIVE', updated_at = now()
+        WHERE student_id = $1::UUID AND UPPER(status) = 'ACTIVE'
+      `, [studentId]);
       await this.assignStudent(client, studentId, counselor.rows[0].counselor_id);
       await client.query('COMMIT');
       return true;

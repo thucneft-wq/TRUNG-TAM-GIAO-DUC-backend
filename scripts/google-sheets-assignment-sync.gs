@@ -168,7 +168,9 @@ function assignmentPostResource_(resource, payload) {
   });
   const status = response.getResponseCode();
   if (status < 200 || status >= 300) {
-    throw new Error(`Backend trả về HTTP ${status} khi đồng bộ ${resource}.`);
+    throw new Error(
+      `Backend trả về HTTP ${status} khi đồng bộ ${resource}: ${response.getContentText()}`,
+    );
   }
 }
 
