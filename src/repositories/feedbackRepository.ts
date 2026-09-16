@@ -95,6 +95,13 @@ export class PgFeedbackRepository implements FeedbackRepositoryPort {
             people.rows[0].counselor_id,
           ]);
           const externalSessionId = input.externalSessionId ?? `${input.externalBookingId}-SESSION`;
+          const sessionStartedAt = input.sessionStartedAt ?? input.bookingStartTime ?? null;
+          const requestedSessionEnd = input.sessionEndedAt ?? input.bookingEndTime ?? null;
+          const sessionEndedAt = sessionStartedAt
+            && requestedSessionEnd
+            && new Date(requestedSessionEnd).getTime() < new Date(sessionStartedAt).getTime()
+            ? input.bookingEndTime ?? sessionStartedAt
+            : requestedSessionEnd;
           const createdSession = await client.query<{ session_id: string }>(`
             INSERT INTO Sessions (
               external_session_id, session_name, session_type, booking_id,
@@ -115,8 +122,8 @@ export class PgFeedbackRepository implements FeedbackRepositoryPort {
             externalSessionId,
             `Google Sheets ${input.externalBookingId}`,
             booking.rows[0].booking_id,
-            input.sessionStartedAt ?? null,
-            input.sessionEndedAt ?? null,
+            sessionStartedAt,
+            sessionEndedAt,
             input.sessionStatus ?? input.bookingStatus ?? null,
           ]);
           session = {
