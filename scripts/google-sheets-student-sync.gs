@@ -216,9 +216,15 @@ function syncStudentRow_(sheet, rowNumber) {
 
 function postStudent_(payload) {
   const properties = PropertiesService.getScriptProperties();
-  const baseUrl = requiredText_(properties.getProperty('BACKEND_BASE_URL'), 'BACKEND_BASE_URL');
+  const baseUrl = requiredText_(
+    properties.getProperty('BACKEND_SYNC_BASE_URL') || properties.getProperty('BACKEND_BASE_URL'),
+    'BACKEND_SYNC_BASE_URL/BACKEND_BASE_URL',
+  ).replace(/\/$/, '');
   const secret = requiredText_(properties.getProperty('GOOGLE_SHEETS_SYNC_SECRET'), 'GOOGLE_SHEETS_SYNC_SECRET');
-  const response = UrlFetchApp.fetch(`${baseUrl.replace(/\/$/, '')}/integrations/google-sheets/students`, {
+  const endpoint = /\/integrations\/google-sheets$/i.test(baseUrl)
+    ? `${baseUrl}/students`
+    : `${baseUrl}/integrations/google-sheets/students`;
+  const response = UrlFetchApp.fetch(endpoint, {
     method: 'post',
     contentType: 'application/json',
     headers: { Authorization: `Bearer ${secret}` },
