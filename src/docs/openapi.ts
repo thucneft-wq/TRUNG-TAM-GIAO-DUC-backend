@@ -504,6 +504,30 @@ export const openApiDocument = {
         },
       },
     },
+    '/api/integrations/google-sheets/assignments': {
+      post: {
+        tags: ['Integrations'],
+        summary: 'Synchronize the current Student–Counselor assignment from Google Sheets',
+        operationId: 'syncGoogleSheetsAssignment',
+        security: syncSecurity,
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: { $ref: '#/components/schemas/GoogleSheetsAssignment' },
+            },
+          },
+        },
+        responses: {
+          '200': response('Assignment synchronized.', { type: 'object', additionalProperties: true }),
+          '201': response('New active assignment created.', { type: 'object', additionalProperties: true }),
+          '400': errorResponse('Request validation failed.'),
+          '401': errorResponse('Synchronization secret is invalid.'),
+          '404': errorResponse('Student or counselor could not be matched.'),
+          '503': errorResponse('Synchronization is not configured.'),
+        },
+      },
+    },
     '/api/integrations/google-sheets/counselors': {
       post: {
         tags: ['Integrations'],
@@ -676,7 +700,7 @@ export const openApiDocument = {
           phoneNumber: { type: 'string', minLength: 1, maxLength: 20 },
           email: { type: 'string', format: 'email', nullable: true, maxLength: 225 },
           dateOfBirth: { type: 'string', format: 'date', nullable: true },
-          status: { type: 'string', enum: ['ACTIVE', 'INACTIVE'], default: 'ACTIVE' },
+          status: { type: 'string', enum: ['ACTIVE', 'COMPLETED', 'INACTIVE'], default: 'ACTIVE' },
           schoolLevel: { type: 'string', enum: ['THCS', 'THPT'], nullable: true },
           schoolName: { type: 'string', nullable: true, maxLength: 225 },
           schoolId: { type: 'string', format: 'uuid', nullable: true },
@@ -695,7 +719,7 @@ export const openApiDocument = {
           phoneNumber: { type: 'string', minLength: 1, maxLength: 20 },
           email: { type: 'string', format: 'email', nullable: true, maxLength: 225 },
           dateOfBirth: { type: 'string', format: 'date', nullable: true },
-          status: { type: 'string', enum: ['ACTIVE', 'INACTIVE'] },
+          status: { type: 'string', enum: ['ACTIVE', 'COMPLETED', 'INACTIVE'] },
           schoolLevel: { type: 'string', enum: ['THCS', 'THPT'], nullable: true },
           schoolName: { type: 'string', nullable: true, maxLength: 225 },
           schoolId: { type: 'string', format: 'uuid', nullable: true },
@@ -707,12 +731,14 @@ export const openApiDocument = {
           { $ref: '#/components/schemas/CreateStudent' },
           {
             type: 'object',
-            required: ['id', 'name', 'assignedCounselorId', 'assignedCounselorName', 'createdAt', 'updatedAt'],
+            required: ['id', 'name', 'assignedCounselorId', 'assignedCounselorName', 'assignmentStatus', 'assignmentEndedAt', 'createdAt', 'updatedAt'],
             properties: {
               id: { type: 'string', format: 'uuid' },
               name: { type: 'string' },
               assignedCounselorId: { type: 'string', format: 'uuid', nullable: true },
               assignedCounselorName: { type: 'string', nullable: true },
+              assignmentStatus: { type: 'string', nullable: true },
+              assignmentEndedAt: { type: 'string', format: 'date-time', nullable: true },
               createdAt: { type: 'string', format: 'date-time' },
               updatedAt: { type: 'string', format: 'date-time', nullable: true },
             },
@@ -847,6 +873,24 @@ export const openApiDocument = {
           createdAt: { type: 'string', format: 'date-time' },
         },
         description: 'Provide sessionId or bookingId. Repeated syncs update the feedback for that session.',
+      },
+      GoogleSheetsAssignment: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['status'],
+        properties: {
+          studentId: { type: 'string', format: 'uuid' },
+          studentEmail: { type: 'string', format: 'email' },
+          studentPhoneNumber: { type: 'string', maxLength: 20 },
+          counselorId: { type: 'string', format: 'uuid' },
+          counselorEmail: { type: 'string', format: 'email' },
+          counselorPhoneNumber: { type: 'string', maxLength: 20 },
+          status: { type: 'string', enum: ['ACTIVE', 'INACTIVE'] },
+          assignedAt: { type: 'string', format: 'date-time' },
+          endedAt: { type: 'string', format: 'date-time' },
+          caseWeight: { type: 'number', exclusiveMinimum: 0, maximum: 10 },
+        },
+        description: 'Identify both records by UUID or Sheet contact fields. An active sync replaces any previous active counselor for the student.',
       },
       FeedbackSyncResponse: {
         type: 'object',

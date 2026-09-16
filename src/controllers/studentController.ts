@@ -4,6 +4,7 @@ import {
   studentIdSchema,
   updateStudentSchema,
 } from '../schemas/studentSchemas.js';
+import { googleSheetsAssignmentSchema } from '../schemas/googleSheetsSchemas.js';
 import type { AnalyticsServicePort, StudentServicePort } from '../types/services.js';
 import type { StudentAccessScope } from '../types/student.js';
 
@@ -74,5 +75,19 @@ export class StudentController {
       result.student.id,
     );
     response.status(result.created ? 201 : 200).json(result);
+  };
+
+  syncAssignmentFromGoogleSheets = async (request: Request, response: Response): Promise<void> => {
+    const input = googleSheetsAssignmentSchema.parse(request.body);
+    const assignment = await this.studentService.syncAssignmentFromGoogleSheets(input);
+    await this.analyticsService.recordAudit(
+      'google-sheets',
+      assignment.status === 'ACTIVE'
+        ? (assignment.created ? 'SYNC_CREATE_ASSIGNMENT' : 'SYNC_UPDATE_ASSIGNMENT')
+        : 'SYNC_END_ASSIGNMENT',
+      'CounselorAssignment',
+      assignment.assignmentId,
+    );
+    response.status(assignment.created ? 201 : 200).json({ assignment });
   };
 }

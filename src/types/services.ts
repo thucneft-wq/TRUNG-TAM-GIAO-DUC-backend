@@ -7,7 +7,9 @@ import type {
 } from './analytics.js';
 import type {
   CreateStudentInput,
+  GoogleSheetsAssignmentInput,
   StudentAccessScope,
+  StudentAssignmentSyncResult,
   StudentDto,
   UpdateStudentInput,
 } from './student.js';
@@ -56,6 +58,9 @@ export interface StudentServicePort {
   update(id: string, input: UpdateStudentInput, scope: StudentAccessScope): Promise<StudentDto>;
   deactivate(id: string, scope: StudentAccessScope): Promise<void>;
   syncFromGoogleSheets(input: CreateStudentInput): Promise<{ student: StudentDto; created: boolean }>;
+  syncAssignmentFromGoogleSheets(
+    input: GoogleSheetsAssignmentInput,
+  ): Promise<StudentAssignmentSyncResult>;
 }
 
 export interface DashboardServicePort {

@@ -16,6 +16,7 @@ const STUDENT_SHEETS = Object.freeze({
 
 const STUDENT_STATUS_HEADER = 'Trạng thái';
 const STUDENT_STATUS_ACTIVE_LABEL = 'Đang hoạt động';
+const STUDENT_STATUS_COMPLETED_LABEL = 'Đã hoàn thành';
 const STUDENT_STATUS_INACTIVE_LABEL = 'Ngừng theo dõi';
 
 /**
@@ -40,7 +41,11 @@ function setupStudentStatusColumns() {
     }
 
     const validation = SpreadsheetApp.newDataValidation()
-      .requireValueInList([STUDENT_STATUS_ACTIVE_LABEL, STUDENT_STATUS_INACTIVE_LABEL], true)
+      .requireValueInList([
+        STUDENT_STATUS_ACTIVE_LABEL,
+        STUDENT_STATUS_COMPLETED_LABEL,
+        STUDENT_STATUS_INACTIVE_LABEL,
+      ], true)
       .setAllowInvalid(false)
       .setHelpText('Chọn "Ngừng theo dõi" để ẩn học sinh khỏi Web nhưng vẫn giữ dữ liệu trong database.')
       .build();
@@ -193,6 +198,9 @@ function normalizeDate_(value) {
 
 function normalizeStudentStatus_(value) {
   const normalized = optionalText_(value).toLocaleLowerCase('vi-VN');
+  if (normalized === STUDENT_STATUS_COMPLETED_LABEL.toLocaleLowerCase('vi-VN') || normalized === 'completed') {
+    return 'COMPLETED';
+  }
   if (normalized === STUDENT_STATUS_INACTIVE_LABEL.toLocaleLowerCase('vi-VN') || normalized === 'inactive') {
     return 'INACTIVE';
   }

@@ -2,7 +2,9 @@ import type { StudentRepositoryPort } from '../repositories/studentRepository.js
 import type { StudentServicePort } from '../types/services.js';
 import type {
   CreateStudentInput,
+  GoogleSheetsAssignmentInput,
   StudentAccessScope,
+  StudentAssignmentSyncResult,
   StudentDto,
   StudentRow,
   StudentStatus,
@@ -11,8 +13,11 @@ import type {
 import { AppError } from '../utils/appError.js';
 import { toDateOnly } from '../utils/dateOnly.js';
 
-const toIso = (value: Date | string | null): string | null =>
-  value === null ? null : new Date(value).toISOString();
+const toIso = (value: Date | string | null | undefined): string | null => {
+  if (!value) return null;
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date.toISOString();
+};
 
 const mapStudent = (row: StudentRow): StudentDto => ({
   id: row.student_id,
@@ -30,6 +35,8 @@ const mapStudent = (row: StudentRow): StudentDto => ({
   addressId: row.address_id,
   assignedCounselorId: row.assigned_counselor_id,
   assignedCounselorName: row.assigned_counselor_name,
+  assignmentStatus: row.assignment_status,
+  assignmentEndedAt: toIso(row.assignment_ended_at),
   createdAt: toIso(row.created_at) ?? '',
   updatedAt: toIso(row.updated_at),
 });
@@ -87,8 +94,8 @@ export class StudentService implements StudentServicePort {
       return { student: mapStudent(await this.repository.create(input, scope)), created: true };
     }
 
-    if (input.status === 'INACTIVE') {
-      if (!await this.repository.deactivate(existing.student_id, scope)) {
+    if (input.status !== 'ACTIVE') {
+      if (!await this.repository.deactivate(existing.student_id, scope, input.status)) {
         throw new AppError(404, 'Student could not be synchronized.', 'STUDENT_NOT_FOUND');
       }
       const deactivated = await this.repository.getById(existing.student_id, scope);
@@ -115,5 +122,11 @@ export class StudentService implements StudentServicePort {
       throw new AppError(404, 'Student could not be synchronized.', 'STUDENT_NOT_FOUND');
     }
     return { student: mapStudent(updated), created: false };
+  }
+
+  async syncAssignmentFromGoogleSheets(
+    input: GoogleSheetsAssignmentInput,
+  ): Promise<StudentAssignmentSyncResult> {
+    return this.repository.syncAssignment(input);
   }
 }

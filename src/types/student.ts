@@ -1,6 +1,6 @@
 import type { InternalRole } from './services.js';
 
-export const studentStatuses = ['ACTIVE', 'INACTIVE'] as const;
+export const studentStatuses = ['ACTIVE', 'COMPLETED', 'INACTIVE'] as const;
 export type StudentStatus = typeof studentStatuses[number];
 export const schoolLevels = ['THCS', 'THPT'] as const;
 export type SchoolLevel = typeof schoolLevels[number];
@@ -25,6 +25,8 @@ export interface StudentRow {
   address_id: string | null;
   assigned_counselor_id: string | null;
   assigned_counselor_name: string | null;
+  assignment_status: string | null;
+  assignment_ended_at: Date | string | null;
   created_at: Date | string;
   updated_at: Date | string | null;
 }
@@ -45,6 +47,8 @@ export interface StudentDto {
   addressId: string | null;
   assignedCounselorId: string | null;
   assignedCounselorName: string | null;
+  assignmentStatus: string | null;
+  assignmentEndedAt: string | null;
   createdAt: string;
   updatedAt: string | null;
 }
@@ -65,3 +69,24 @@ export interface CreateStudentInput {
 }
 
 export type UpdateStudentInput = Partial<Omit<CreateStudentInput, 'counselorId'>>;
+
+export interface GoogleSheetsAssignmentInput {
+  studentId?: string;
+  studentEmail?: string;
+  studentPhoneNumber?: string;
+  counselorId?: string;
+  counselorEmail?: string;
+  counselorPhoneNumber?: string;
+  status: 'ACTIVE' | 'INACTIVE';
+  assignedAt?: string;
+  endedAt?: string;
+  caseWeight?: number;
+}
+
+export interface StudentAssignmentSyncResult {
+  assignmentId: string | null;
+  studentId: string;
+  counselorId: string;
+  status: 'ACTIVE' | 'INACTIVE';
+  created: boolean;
+}

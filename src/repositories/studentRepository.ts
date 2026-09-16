@@ -1,10 +1,13 @@
 import type { Pool, PoolClient } from 'pg';
 import type {
   CreateStudentInput,
+  GoogleSheetsAssignmentInput,
   StudentAccessScope,
+  StudentAssignmentSyncResult,
   StudentRow,
   UpdateStudentInput,
 } from '../types/student.js';
+import { AppError } from '../utils/appError.js';
 
 export interface StudentRepositoryPort {
   list(scope: StudentAccessScope): Promise<StudentRow[]>;
@@ -12,7 +15,12 @@ export interface StudentRepositoryPort {
   findByContact(email: string | null, phoneNumber: string): Promise<StudentRow | null>;
   create(input: CreateStudentInput, scope: StudentAccessScope): Promise<StudentRow>;
   update(id: string, input: UpdateStudentInput, scope: StudentAccessScope): Promise<StudentRow | null>;
-  deactivate(id: string, scope: StudentAccessScope): Promise<boolean>;
+  deactivate(
+    id: string,
+    scope: StudentAccessScope,
+    status?: 'COMPLETED' | 'INACTIVE',
+  ): Promise<boolean>;
+  syncAssignment(input: GoogleSheetsAssignmentInput): Promise<StudentAssignmentSyncResult>;
 }
 
 const STUDENT_SELECT = `
@@ -31,6 +39,8 @@ SELECT
     s.address_id,
     assigned.counselor_id AS assigned_counselor_id,
     assigned.counselor_name AS assigned_counselor_name,
+    assigned.assignment_status,
+    assigned.ended_at AS assignment_ended_at,
     s.created_at,
     s.updated_at
 FROM Students s
@@ -38,15 +48,21 @@ LEFT JOIN Schools school ON school.school_id = s.school_id
 LEFT JOIN LATERAL (
     SELECT
         car.counselor_id,
-        CONCAT_WS(' ', c.first_name, c.last_name) AS counselor_name
+        CONCAT_WS(' ', c.first_name, c.last_name) AS counselor_name,
+        car.status AS assignment_status,
+        car.ended_at
     FROM Counselor_Assignments ca
     JOIN Counselor_Assignment_Records car ON car.assignment_id = ca.assignment_id
     JOIN Counselors c ON c.counselor_id = car.counselor_id
     WHERE ca.student_id = s.student_id
-      AND UPPER(ca.status) = 'ACTIVE'
-      AND UPPER(car.status) = 'ACTIVE'
-      AND car.ended_at IS NULL
-    ORDER BY car.assigned_at DESC
+    ORDER BY
+      CASE
+        WHEN UPPER(ca.status) = 'ACTIVE'
+          AND UPPER(car.status) = 'ACTIVE'
+          AND car.ended_at IS NULL THEN 0
+        ELSE 1
+      END,
+      car.assigned_at DESC
     LIMIT 1
 ) assigned ON TRUE
 `;
@@ -70,7 +86,7 @@ const accessCondition = `
 
 const LIST_STUDENTS_SQL = `
 ${STUDENT_SELECT}
-WHERE UPPER(s.status) = 'ACTIVE'
+WHERE ($1::TEXT = 'admin' OR UPPER(s.status) = 'ACTIVE')
   AND ${accessCondition}
 ORDER BY s.last_name, s.first_name
 `;
@@ -239,7 +255,11 @@ export class PgStudentRepository implements StudentRepositoryPort {
     }
   }
 
-  async deactivate(id: string, scope: StudentAccessScope): Promise<boolean> {
+  async deactivate(
+    id: string,
+    scope: StudentAccessScope,
+    status: 'COMPLETED' | 'INACTIVE' = 'INACTIVE',
+  ): Promise<boolean> {
     const client = await this.pool.connect();
     try {
       await client.query('BEGIN');
@@ -256,9 +276,9 @@ export class PgStudentRepository implements StudentRepositoryPort {
       }
 
       await client.query(`
-        UPDATE Students SET status = 'INACTIVE', updated_at = now()
+        UPDATE Students SET status = $2::VARCHAR, updated_at = now()
         WHERE student_id = $1::UUID
-      `, [id]);
+      `, [id, status]);
       await client.query(`
         UPDATE Counselor_Assignment_Records car
         SET status = 'INACTIVE', ended_at = COALESCE(ended_at, now()), updated_at = now()
@@ -274,6 +294,136 @@ export class PgStudentRepository implements StudentRepositoryPort {
       `, [id]);
       await client.query('COMMIT');
       return true;
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  async syncAssignment(
+    input: GoogleSheetsAssignmentInput,
+  ): Promise<StudentAssignmentSyncResult> {
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      const student = await client.query<{ student_id: string }>(`
+        SELECT student_id
+        FROM Students
+        WHERE ($1::UUID IS NOT NULL AND student_id = $1::UUID)
+           OR ($2::VARCHAR IS NOT NULL AND LOWER(email) = LOWER($2::VARCHAR))
+           OR ($3::VARCHAR IS NOT NULL AND phone_number = $3::VARCHAR)
+        ORDER BY CASE WHEN student_id = $1::UUID THEN 0 ELSE 1 END, created_at DESC
+        LIMIT 1
+      `, [input.studentId ?? null, input.studentEmail ?? null, input.studentPhoneNumber ?? null]);
+      if (!student.rows[0]) {
+        throw new AppError(404, 'Student from assignment sheet was not found.', 'ASSIGNMENT_STUDENT_NOT_FOUND');
+      }
+
+      const counselor = await client.query<{ counselor_id: string }>(`
+        SELECT counselor_id
+        FROM Counselors
+        WHERE ($1::UUID IS NOT NULL AND counselor_id = $1::UUID)
+           OR ($2::VARCHAR IS NOT NULL AND LOWER(email) = LOWER($2::VARCHAR))
+           OR ($3::VARCHAR IS NOT NULL AND phone_number = $3::VARCHAR)
+        ORDER BY CASE WHEN counselor_id = $1::UUID THEN 0 ELSE 1 END, created_at DESC
+        LIMIT 1
+      `, [input.counselorId ?? null, input.counselorEmail ?? null, input.counselorPhoneNumber ?? null]);
+      if (!counselor.rows[0]) {
+        throw new AppError(404, 'Counselor from assignment sheet was not found.', 'ASSIGNMENT_COUNSELOR_NOT_FOUND');
+      }
+
+      const studentId = student.rows[0].student_id;
+      const counselorId = counselor.rows[0].counselor_id;
+      await client.query('SELECT pg_advisory_xact_lock(hashtext($1::TEXT))', [studentId]);
+
+      const current = await client.query<{ assignment_id: string }>(`
+        SELECT ca.assignment_id
+        FROM Counselor_Assignments ca
+        JOIN Counselor_Assignment_Records car ON car.assignment_id = ca.assignment_id
+        WHERE ca.student_id = $1::UUID
+          AND car.counselor_id = $2::UUID
+          AND UPPER(ca.status) = 'ACTIVE'
+          AND UPPER(car.status) = 'ACTIVE'
+          AND car.ended_at IS NULL
+        ORDER BY car.assigned_at DESC
+        LIMIT 1
+        FOR UPDATE OF ca, car
+      `, [studentId, counselorId]);
+      const currentAssignmentId = current.rows[0]?.assignment_id ?? null;
+
+      if (input.status === 'INACTIVE') {
+        if (currentAssignmentId) {
+          await client.query(`
+            UPDATE Counselor_Assignment_Records
+            SET status = 'INACTIVE', ended_at = COALESCE($2::TIMESTAMPTZ, ended_at, now()), updated_at = now()
+            WHERE assignment_id = $1::UUID AND UPPER(status) = 'ACTIVE'
+          `, [currentAssignmentId, input.endedAt ?? null]);
+          await client.query(`
+            UPDATE Counselor_Assignments
+            SET status = 'INACTIVE', updated_at = now()
+            WHERE assignment_id = $1::UUID
+          `, [currentAssignmentId]);
+        }
+        await client.query('COMMIT');
+        return {
+          assignmentId: currentAssignmentId,
+          studentId,
+          counselorId,
+          status: 'INACTIVE',
+          created: false,
+        };
+      }
+
+      await client.query(`
+        UPDATE Counselor_Assignment_Records car
+        SET status = 'INACTIVE', ended_at = COALESCE(ended_at, $2::TIMESTAMPTZ, now()), updated_at = now()
+        FROM Counselor_Assignments ca
+        WHERE ca.assignment_id = car.assignment_id
+          AND ca.student_id = $1::UUID
+          AND UPPER(car.status) = 'ACTIVE'
+          AND car.ended_at IS NULL
+          AND ($3::UUID IS NULL OR ca.assignment_id <> $3::UUID)
+      `, [studentId, input.assignedAt ?? null, currentAssignmentId]);
+      await client.query(`
+        UPDATE Counselor_Assignments
+        SET status = 'INACTIVE', updated_at = now()
+        WHERE student_id = $1::UUID
+          AND UPPER(status) = 'ACTIVE'
+          AND ($2::UUID IS NULL OR assignment_id <> $2::UUID)
+      `, [studentId, currentAssignmentId]);
+
+      let assignmentId = currentAssignmentId;
+      let created = false;
+      if (assignmentId) {
+        await client.query(`
+          UPDATE Counselor_Assignment_Records
+          SET case_weight = COALESCE($2::NUMERIC, case_weight), updated_at = now()
+          WHERE assignment_id = $1::UUID AND counselor_id = $3::UUID
+        `, [assignmentId, input.caseWeight ?? null, counselorId]);
+      } else {
+        const assignment = await client.query<{ assignment_id: string }>(`
+          INSERT INTO Counselor_Assignments (student_id, status)
+          VALUES ($1::UUID, 'ACTIVE')
+          RETURNING assignment_id
+        `, [studentId]);
+        assignmentId = assignment.rows[0].assignment_id;
+        await client.query(`
+          INSERT INTO Counselor_Assignment_Records (
+            assignment_id, counselor_id, status, assigned_at, case_weight
+          )
+          VALUES ($1::UUID, $2::UUID, 'ACTIVE', COALESCE($3::TIMESTAMPTZ, now()), COALESCE($4::NUMERIC, 1))
+        `, [assignmentId, counselorId, input.assignedAt ?? null, input.caseWeight ?? null]);
+        created = true;
+      }
+
+      await client.query(`
+        UPDATE Students SET status = 'ACTIVE', updated_at = now()
+        WHERE student_id = $1::UUID
+      `, [studentId]);
+      await client.query('COMMIT');
+      return { assignmentId, studentId, counselorId, status: 'ACTIVE', created };
     } catch (error) {
       await client.query('ROLLBACK');
       throw error;

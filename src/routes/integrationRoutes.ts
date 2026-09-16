@@ -26,6 +26,11 @@ export const createIntegrationRouter = (
     asyncHandler(googleSheetsController.syncCounselorAccount),
   );
   router.post(
+    '/google-sheets/assignments',
+    createGoogleSheetsAuthMiddleware(googleSheetsSyncSecret),
+    asyncHandler(studentController.syncAssignmentFromGoogleSheets),
+  );
+  router.post(
     '/google-sheets/feedbacks',
     createGoogleSheetsAuthMiddleware(googleSheetsSyncSecret),
     asyncHandler(googleSheetsController.syncFeedback),
