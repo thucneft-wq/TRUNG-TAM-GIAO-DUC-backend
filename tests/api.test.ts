@@ -39,6 +39,7 @@ const counselorFixture = {
 
 const studentFixture: StudentDto = {
   id: STUDENT_ID,
+  externalId: 'HS-01',
   firstName: 'Dev',
   lastName: 'Student',
   name: 'Dev Student',

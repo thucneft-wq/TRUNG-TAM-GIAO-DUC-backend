@@ -52,6 +52,68 @@ function syncAllAssignments() {
   console.log(`Đã đồng bộ ${synced} dòng phân công.`);
 }
 
+/**
+ * Run once after deploying backend support for short Sheet IDs. It first sends
+ * every HS-xx/TTV-xx identifier to the backend, then imports assignments.
+ */
+function syncAllExternalIdsAndAssignments() {
+  syncAllExternalEntityIds_();
+  syncAllAssignments();
+}
+
+function syncAllExternalEntityIds_() {
+  const spreadsheet = SpreadsheetApp.getActive();
+  const studentsSheet = spreadsheet.getSheetByName('students');
+  const counselorsSheet = spreadsheet.getSheetByName('counselors');
+  if (!studentsSheet || !counselorsSheet) {
+    throw new Error('Spreadsheet phải có tab students và counselors.');
+  }
+
+  for (let rowNumber = 2; rowNumber <= studentsSheet.getLastRow(); rowNumber += 1) {
+    const row = assignmentReadRow_(studentsSheet, rowNumber);
+    const externalStudentId = assignmentText_(row.student_id || row['Student ID']);
+    const firstName = assignmentText_(row.first_name || row['First name']);
+    const lastName = assignmentText_(row.last_name || row['Last name']);
+    const phoneNumber = assignmentText_(row.phone_number || row['Phone number']);
+    if (!externalStudentId || !firstName || !lastName || !phoneNumber) continue;
+
+    const gradeLevel = Number(row.grade_level);
+    assignmentPostResource_('students', {
+      externalStudentId,
+      firstName,
+      lastName,
+      gender: assignmentNull_(row.gender),
+      phoneNumber,
+      email: assignmentNull_(row.email),
+      dateOfBirth: assignmentDateOnly_(row.date_of_birth),
+      status: assignmentNormalize_(row.status) === 'active' ? 'ACTIVE' : 'INACTIVE',
+      schoolLevel: Number.isFinite(gradeLevel) ? (gradeLevel <= 9 ? 'THCS' : 'THPT') : null,
+      schoolName: assignmentNull_(row.school_name),
+    });
+  }
+
+  for (let rowNumber = 2; rowNumber <= counselorsSheet.getLastRow(); rowNumber += 1) {
+    const row = assignmentReadRow_(counselorsSheet, rowNumber);
+    const externalCounselorId = assignmentText_(row.counselor_id || row['Counselor ID']);
+    const firstName = assignmentText_(row.first_name || row['First name']);
+    const lastName = assignmentText_(row.last_name || row['Last name']);
+    if (!externalCounselorId || !firstName || !lastName) continue;
+
+    assignmentPostResource_('counselors', {
+      externalCounselorId,
+      firstName,
+      lastName,
+      gender: assignmentNull_(row.gender),
+      phoneNumber: assignmentNull_(row.phone_number),
+      email: assignmentNull_(row.email),
+      dateOfBirth: assignmentDateOnly_(row.date_of_birth),
+      role: assignmentNull_(row.role) || 'counselor',
+      specialization: assignmentNull_(row.specialization),
+      status: assignmentNormalize_(row.status) === 'active' ? 'ACTIVE' : 'INACTIVE',
+    });
+  }
+}
+
 function syncAssignmentRow_(sheet, rowNumber) {
   const row = assignmentReadRow_(sheet, rowNumber);
   const externalStudentId = assignmentText_(row.student_id || row['Student ID']);
@@ -65,8 +127,10 @@ function syncAssignmentRow_(sheet, rowNumber) {
   if (!counselor) throw new Error(`Không tìm thấy counselor_id ${externalCounselorId} trong tab counselors.`);
 
   const payload = {
+    externalStudentId,
     studentEmail: assignmentNull_(student.email),
     studentPhoneNumber: assignmentNull_(student.phone_number),
+    externalCounselorId,
     counselorEmail: assignmentNull_(counselor.email),
     counselorPhoneNumber: assignmentNull_(counselor.phone_number),
     status: assignmentStatus_(row.status),
@@ -80,6 +144,10 @@ function syncAssignmentRow_(sheet, rowNumber) {
 }
 
 function assignmentPost_(payload) {
+  assignmentPostResource_('assignments', payload);
+}
+
+function assignmentPostResource_(resource, payload) {
   const properties = PropertiesService.getScriptProperties();
   const configuredBase = assignmentText_(
     properties.getProperty('BACKEND_SYNC_BASE_URL') || properties.getProperty('BACKEND_BASE_URL'),
@@ -89,8 +157,8 @@ function assignmentPost_(payload) {
     throw new Error('Thiếu BACKEND_SYNC_BASE_URL/BACKEND_BASE_URL hoặc GOOGLE_SHEETS_SYNC_SECRET.');
   }
   const endpoint = /\/integrations\/google-sheets$/i.test(configuredBase)
-    ? `${configuredBase}/assignments`
-    : `${configuredBase}/integrations/google-sheets/assignments`;
+    ? `${configuredBase}/${resource}`
+    : `${configuredBase}/integrations/google-sheets/${resource}`;
   const response = UrlFetchApp.fetch(endpoint, {
     method: 'post',
     contentType: 'application/json',
@@ -100,7 +168,7 @@ function assignmentPost_(payload) {
   });
   const status = response.getResponseCode();
   if (status < 200 || status >= 300) {
-    throw new Error(`Backend trả về HTTP ${status} khi đồng bộ phân công.`);
+    throw new Error(`Backend trả về HTTP ${status} khi đồng bộ ${resource}.`);
   }
 }
 
@@ -139,6 +207,11 @@ function assignmentIsoDate_(value) {
   }
   const parsed = new Date(value);
   return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString();
+}
+
+function assignmentDateOnly_(value) {
+  const iso = assignmentIsoDate_(value);
+  return iso ? iso.slice(0, 10) : null;
 }
 
 function assignmentNumber_(value) {

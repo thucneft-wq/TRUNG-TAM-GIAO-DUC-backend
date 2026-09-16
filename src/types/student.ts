@@ -12,6 +12,7 @@ export interface StudentAccessScope {
 
 export interface StudentRow {
   student_id: string;
+  external_student_id: string | null;
   first_name: string;
   last_name: string;
   gender: string | null;
@@ -33,6 +34,7 @@ export interface StudentRow {
 
 export interface StudentDto {
   id: string;
+  externalId: string | null;
   firstName: string;
   lastName: string;
   name: string;
@@ -54,6 +56,7 @@ export interface StudentDto {
 }
 
 export interface CreateStudentInput {
+  externalStudentId?: string | null;
   firstName: string;
   lastName: string;
   gender?: string | null;
@@ -72,9 +75,11 @@ export type UpdateStudentInput = Partial<Omit<CreateStudentInput, 'counselorId'>
 
 export interface GoogleSheetsAssignmentInput {
   studentId?: string;
+  externalStudentId?: string;
   studentEmail?: string;
   studentPhoneNumber?: string;
   counselorId?: string;
+  externalCounselorId?: string;
   counselorEmail?: string;
   counselorPhoneNumber?: string;
   status: 'ACTIVE' | 'INACTIVE';

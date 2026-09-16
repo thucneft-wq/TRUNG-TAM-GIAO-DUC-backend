@@ -157,6 +157,7 @@ export const mapAnalyticsRow = (row: CounselorAnalyticsRow): CounselorDto => {
 
   return {
     id: row.counselor_id,
+    externalId: row.external_counselor_id,
     firstName: row.first_name,
     lastName: row.last_name,
     name: `${row.first_name} ${row.last_name}`.trim(),

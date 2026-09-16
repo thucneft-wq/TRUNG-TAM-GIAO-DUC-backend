@@ -6,8 +6,14 @@ const optionalUuid = z.preprocess(
   z.string().uuid().optional(),
 );
 
+const optionalExternalId = z.preprocess(
+  (value) => value === '' || value === null ? undefined : value,
+  z.string().trim().min(1).max(50).regex(/^[A-Za-z0-9][A-Za-z0-9_-]*$/).optional(),
+);
+
 export const googleSheetsCounselorSchema = createCounselorSchema.extend({
   counselorId: optionalUuid,
+  externalCounselorId: optionalExternalId,
 });
 
 export const googleSheetsCounselorAccountSchema = z.object({
@@ -62,6 +68,7 @@ export const googleSheetsFeedbackSchema = z.object({
 
 export const googleSheetsAssignmentSchema = z.object({
   studentId: optionalUuid,
+  externalStudentId: optionalExternalId,
   studentEmail: z.preprocess(
     (value) => value === '' || value === null ? undefined : value,
     z.email().max(225).optional(),
@@ -71,6 +78,7 @@ export const googleSheetsAssignmentSchema = z.object({
     z.string().trim().min(1).max(20).optional(),
   ),
   counselorId: optionalUuid,
+  externalCounselorId: optionalExternalId,
   counselorEmail: z.preprocess(
     (value) => value === '' || value === null ? undefined : value,
     z.email().max(225).optional(),
@@ -91,10 +99,17 @@ export const googleSheetsAssignmentSchema = z.object({
   caseWeight: z.coerce.number().positive().max(10).optional(),
 }).strict()
   .refine(
-    (value) => Boolean(value.studentId || value.studentEmail || value.studentPhoneNumber),
+    (value) => Boolean(
+      value.studentId || value.externalStudentId || value.studentEmail || value.studentPhoneNumber
+    ),
     { message: 'Provide a student identifier.', path: ['studentId'] },
   )
   .refine(
-    (value) => Boolean(value.counselorId || value.counselorEmail || value.counselorPhoneNumber),
+    (value) => Boolean(
+      value.counselorId
+      || value.externalCounselorId
+      || value.counselorEmail
+      || value.counselorPhoneNumber
+    ),
     { message: 'Provide a counselor identifier.', path: ['counselorId'] },
   );

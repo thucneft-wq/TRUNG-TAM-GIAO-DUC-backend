@@ -21,6 +21,7 @@ const toIso = (value: Date | string | null | undefined): string | null => {
 
 const mapStudent = (row: StudentRow): StudentDto => ({
   id: row.student_id,
+  externalId: row.external_student_id,
   firstName: row.first_name,
   lastName: row.last_name,
   name: `${row.first_name} ${row.last_name}`.trim(),
@@ -89,7 +90,11 @@ export class StudentService implements StudentServicePort {
     input: CreateStudentInput,
   ): Promise<{ student: StudentDto; created: boolean }> {
     const scope: StudentAccessScope = { role: 'admin', counselorId: null };
-    const existing = await this.repository.findByContact(input.email ?? null, input.phoneNumber);
+    const existing = await this.repository.findBySyncIdentifier(
+      input.externalStudentId ?? null,
+      input.email ?? null,
+      input.phoneNumber,
+    );
     if (!existing) {
       return { student: mapStudent(await this.repository.create(input, scope)), created: true };
     }
@@ -105,7 +110,7 @@ export class StudentService implements StudentServicePort {
       return { student: mapStudent(deactivated), created: false };
     }
 
-    const updated = await this.repository.update(existing.student_id, {
+    const updateInput: UpdateStudentInput = {
       firstName: input.firstName,
       lastName: input.lastName,
       gender: input.gender ?? null,
@@ -117,7 +122,11 @@ export class StudentService implements StudentServicePort {
       schoolName: input.schoolName ?? null,
       schoolId: input.schoolId ?? null,
       addressId: input.addressId ?? null,
-    }, scope);
+    };
+    if (input.externalStudentId !== undefined) {
+      updateInput.externalStudentId = input.externalStudentId;
+    }
+    const updated = await this.repository.update(existing.student_id, updateInput, scope);
     if (!updated) {
       throw new AppError(404, 'Student could not be synchronized.', 'STUDENT_NOT_FOUND');
     }

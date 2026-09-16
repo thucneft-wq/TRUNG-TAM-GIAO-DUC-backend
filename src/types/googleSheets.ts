@@ -2,6 +2,7 @@ import type { CreateCounselorInput } from './counselor.js';
 
 export type GoogleSheetsCounselorInput = CreateCounselorInput & {
   counselorId?: string;
+  externalCounselorId?: string;
 };
 
 export type CounselorAccountStatus =

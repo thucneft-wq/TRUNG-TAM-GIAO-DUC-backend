@@ -7,6 +7,7 @@ loadDotEnv({ path: '.env.local', override: true });
 import { createApp } from './application.js';
 import { loadConfig } from './config/env.js';
 import { createDatabaseHealthCheck } from './database/health.js';
+import { runRuntimeMigrations } from './database/migrations.js';
 import { createDatabasePool } from './database/pool.js';
 import { PgAnalyticsRepository } from './repositories/analyticsRepository.js';
 import { PgCounselorRepository } from './repositories/counselorRepository.js';
@@ -26,6 +27,7 @@ void express;
 
 const config = loadConfig();
 const pool = createDatabasePool(config.databaseUrl);
+await runRuntimeMigrations(pool);
 const counselorRepository = new PgCounselorRepository(pool);
 const counselorAccountRepository = new PgCounselorAccountRepository(pool);
 const analyticsRepository = new PgAnalyticsRepository(pool);

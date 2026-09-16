@@ -158,6 +158,7 @@ WITH counselor_scope AS (
 )
 SELECT
     c.counselor_id,
+    c.external_counselor_id,
     c.first_name,
     c.last_name,
     c.gender,
@@ -348,11 +349,21 @@ export class PgCounselorRepository implements CounselorRepositoryPort {
       SELECT counselor_id
       FROM Counselors
       WHERE ($1::UUID IS NOT NULL AND counselor_id = $1::UUID)
-         OR ($2::VARCHAR IS NOT NULL AND LOWER(email) = LOWER($2::VARCHAR))
-         OR ($3::VARCHAR IS NOT NULL AND phone_number = $3::VARCHAR)
-      ORDER BY CASE WHEN counselor_id = $1::UUID THEN 0 ELSE 1 END, created_at DESC
+         OR ($2::VARCHAR IS NOT NULL AND UPPER(external_counselor_id) = UPPER($2::VARCHAR))
+         OR ($3::VARCHAR IS NOT NULL AND LOWER(email) = LOWER($3::VARCHAR))
+         OR ($4::VARCHAR IS NOT NULL AND phone_number = $4::VARCHAR)
+      ORDER BY CASE
+        WHEN counselor_id = $1::UUID THEN 0
+        WHEN UPPER(external_counselor_id) = UPPER($2::VARCHAR) THEN 1
+        ELSE 2
+      END, created_at DESC
       LIMIT 1
-    `, [input.counselorId ?? null, input.email ?? null, input.phoneNumber ?? null]);
+    `, [
+      input.counselorId ?? null,
+      input.externalCounselorId ?? null,
+      input.email ?? null,
+      input.phoneNumber ?? null,
+    ]);
     const existingId = matched.rows[0]?.counselor_id;
     const profileInput: CreateCounselorInput = {
       firstName: input.firstName,
@@ -369,18 +380,36 @@ export class PgCounselorRepository implements CounselorRepositoryPort {
     if (existingId) {
       const profile = await this.update(existingId, profileInput);
       if (!profile) throw new AppError(404, 'Counselor was not found.', 'COUNSELOR_NOT_FOUND');
+      if (input.externalCounselorId) {
+        const updated = await this.pool.query<CounselorProfileRow>(`
+          UPDATE Counselors
+          SET external_counselor_id = $2::VARCHAR, updated_at = now()
+          WHERE counselor_id = $1::UUID
+          RETURNING *
+        `, [existingId, input.externalCounselorId]);
+        return { profile: updated.rows[0], created: false };
+      }
       return { profile, created: false };
     }
 
     if (!input.counselorId) {
-      return { profile: await this.create(profileInput), created: true };
+      const profile = await this.create(profileInput);
+      if (!input.externalCounselorId) return { profile, created: true };
+      const updated = await this.pool.query<CounselorProfileRow>(`
+        UPDATE Counselors
+        SET external_counselor_id = $2::VARCHAR, updated_at = now()
+        WHERE counselor_id = $1::UUID
+        RETURNING *
+      `, [profile.counselor_id, input.externalCounselorId]);
+      return { profile: updated.rows[0], created: true };
     }
     const inserted = await this.pool.query(`
       INSERT INTO Counselors (
         counselor_id, first_name, last_name, gender, phone_number, email,
-        date_of_birth, role, specialization, status, fte_ratio
+        date_of_birth, role, specialization, status, fte_ratio,
+        external_counselor_id
       )
-      VALUES ($1::UUID, $2, $3, $4, $5, $6, $7::DATE, $8, $9, $10, $11)
+      VALUES ($1::UUID, $2, $3, $4, $5, $6, $7::DATE, $8, $9, $10, $11, $12::VARCHAR)
       RETURNING *
     `, [
       input.counselorId,
@@ -394,6 +423,7 @@ export class PgCounselorRepository implements CounselorRepositoryPort {
       profileInput.specialization,
       profileInput.status,
       profileInput.fteRatio ?? 1,
+      input.externalCounselorId ?? null,
     ]);
     return { profile: inserted.rows[0] as CounselorProfileRow, created: true };
   }

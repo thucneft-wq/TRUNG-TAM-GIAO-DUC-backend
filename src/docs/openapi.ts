@@ -694,6 +694,7 @@ export const openApiDocument = {
         additionalProperties: false,
         required: ['firstName', 'lastName', 'phoneNumber'],
         properties: {
+          externalStudentId: { type: 'string', nullable: true, maxLength: 50, example: 'HS-01' },
           firstName: { type: 'string', minLength: 1, maxLength: 100 },
           lastName: { type: 'string', minLength: 1, maxLength: 100 },
           gender: { type: 'string', nullable: true, maxLength: 20 },
@@ -713,6 +714,7 @@ export const openApiDocument = {
         additionalProperties: false,
         minProperties: 1,
         properties: {
+          externalStudentId: { type: 'string', nullable: true, maxLength: 50, example: 'HS-01' },
           firstName: { type: 'string', minLength: 1, maxLength: 100 },
           lastName: { type: 'string', minLength: 1, maxLength: 100 },
           gender: { type: 'string', nullable: true, maxLength: 20 },
@@ -731,9 +733,10 @@ export const openApiDocument = {
           { $ref: '#/components/schemas/CreateStudent' },
           {
             type: 'object',
-            required: ['id', 'name', 'assignedCounselorId', 'assignedCounselorName', 'assignmentStatus', 'assignmentEndedAt', 'createdAt', 'updatedAt'],
+            required: ['id', 'externalId', 'name', 'assignedCounselorId', 'assignedCounselorName', 'assignmentStatus', 'assignmentEndedAt', 'createdAt', 'updatedAt'],
             properties: {
               id: { type: 'string', format: 'uuid' },
+              externalId: { type: 'string', nullable: true, example: 'HS-01' },
               name: { type: 'string' },
               assignedCounselorId: { type: 'string', format: 'uuid', nullable: true },
               assignedCounselorName: { type: 'string', nullable: true },
@@ -780,9 +783,10 @@ export const openApiDocument = {
       Counselor: {
         type: 'object',
         additionalProperties: true,
-        required: ['id', 'firstName', 'lastName', 'name', 'status'],
+        required: ['id', 'externalId', 'firstName', 'lastName', 'name', 'status'],
         properties: {
           id: { type: 'string', format: 'uuid' },
+          externalId: { type: 'string', nullable: true, example: 'TTV-01' },
           firstName: { type: 'string' },
           lastName: { type: 'string' },
           name: { type: 'string' },
@@ -837,7 +841,10 @@ export const openApiDocument = {
           { $ref: '#/components/schemas/CounselorInput' },
           {
             type: 'object',
-            properties: { counselorId: { type: 'string', format: 'uuid' } },
+            properties: {
+              counselorId: { type: 'string', format: 'uuid' },
+              externalCounselorId: { type: 'string', maxLength: 50, example: 'TTV-01' },
+            },
           },
         ],
       },
@@ -880,9 +887,11 @@ export const openApiDocument = {
         required: ['status'],
         properties: {
           studentId: { type: 'string', format: 'uuid' },
+          externalStudentId: { type: 'string', maxLength: 50, example: 'HS-01' },
           studentEmail: { type: 'string', format: 'email' },
           studentPhoneNumber: { type: 'string', maxLength: 20 },
           counselorId: { type: 'string', format: 'uuid' },
+          externalCounselorId: { type: 'string', maxLength: 50, example: 'TTV-01' },
           counselorEmail: { type: 'string', format: 'email' },
           counselorPhoneNumber: { type: 'string', maxLength: 20 },
           status: { type: 'string', enum: ['ACTIVE', 'INACTIVE'] },
@@ -890,7 +899,7 @@ export const openApiDocument = {
           endedAt: { type: 'string', format: 'date-time' },
           caseWeight: { type: 'number', exclusiveMinimum: 0, maximum: 10 },
         },
-        description: 'Identify both records by UUID or Sheet contact fields. An active sync replaces any previous active counselor for the student.',
+        description: 'Identify both records by the short Sheet IDs (HS-01/TTV-01), UUIDs, or contact fields. An active sync replaces any previous active counselor for the student.',
       },
       FeedbackSyncResponse: {
         type: 'object',

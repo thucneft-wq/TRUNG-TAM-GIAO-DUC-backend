@@ -12,7 +12,11 @@ import { AppError } from '../utils/appError.js';
 export interface StudentRepositoryPort {
   list(scope: StudentAccessScope): Promise<StudentRow[]>;
   getById(id: string, scope: StudentAccessScope): Promise<StudentRow | null>;
-  findByContact(email: string | null, phoneNumber: string): Promise<StudentRow | null>;
+  findBySyncIdentifier(
+    externalStudentId: string | null,
+    email: string | null,
+    phoneNumber: string,
+  ): Promise<StudentRow | null>;
   create(input: CreateStudentInput, scope: StudentAccessScope): Promise<StudentRow>;
   update(id: string, input: UpdateStudentInput, scope: StudentAccessScope): Promise<StudentRow | null>;
   deactivate(
@@ -26,6 +30,7 @@ export interface StudentRepositoryPort {
 const STUDENT_SELECT = `
 SELECT
     s.student_id,
+    s.external_student_id,
     s.first_name,
     s.last_name,
     s.gender,
@@ -110,6 +115,7 @@ SET
     school_level = CASE WHEN $18::BOOLEAN THEN $19::VARCHAR ELSE school_level END,
     school_id = CASE WHEN $20::BOOLEAN THEN $21::UUID ELSE school_id END,
     address_id = CASE WHEN $22::BOOLEAN THEN $23::UUID ELSE address_id END,
+    external_student_id = CASE WHEN $24::BOOLEAN THEN $25::VARCHAR ELSE external_student_id END,
     updated_at = now()
 WHERE s.student_id = $3::UUID
   AND ${accessCondition}
@@ -164,14 +170,22 @@ export class PgStudentRepository implements StudentRepositoryPort {
     return (result.rows[0] as StudentRow | undefined) ?? null;
   }
 
-  async findByContact(email: string | null, phoneNumber: string): Promise<StudentRow | null> {
+  async findBySyncIdentifier(
+    externalStudentId: string | null,
+    email: string | null,
+    phoneNumber: string,
+  ): Promise<StudentRow | null> {
     const result = await this.pool.query(`
       ${STUDENT_SELECT}
-      WHERE ($1::VARCHAR IS NOT NULL AND LOWER(s.email) = LOWER($1::VARCHAR))
-         OR s.phone_number = $2::VARCHAR
-      ORDER BY s.created_at DESC
+      WHERE ($1::VARCHAR IS NOT NULL AND UPPER(s.external_student_id) = UPPER($1::VARCHAR))
+         OR ($2::VARCHAR IS NOT NULL AND LOWER(s.email) = LOWER($2::VARCHAR))
+         OR s.phone_number = $3::VARCHAR
+      ORDER BY CASE
+        WHEN UPPER(s.external_student_id) = UPPER($1::VARCHAR) THEN 0
+        ELSE 1
+      END, s.created_at DESC
       LIMIT 1
-    `, [email, phoneNumber]);
+    `, [externalStudentId, email, phoneNumber]);
     return (result.rows[0] as StudentRow | undefined) ?? null;
   }
 
@@ -183,9 +197,10 @@ export class PgStudentRepository implements StudentRepositoryPort {
       const created = await client.query<{ student_id: string }>(`
         INSERT INTO Students (
           first_name, last_name, gender, phone_number, email,
-          date_of_birth, status, school_level, school_id, address_id
+          date_of_birth, status, school_level, school_id, address_id,
+          external_student_id
         )
-        VALUES ($1, $2, $3, $4, $5, $6::DATE, $7, $8, $9::UUID, $10::UUID)
+        VALUES ($1, $2, $3, $4, $5, $6::DATE, $7, $8, $9::UUID, $10::UUID, $11::VARCHAR)
         RETURNING student_id
       `, [
         input.firstName,
@@ -198,6 +213,7 @@ export class PgStudentRepository implements StudentRepositoryPort {
         input.schoolLevel ?? null,
         resolvedSchoolId ?? null,
         input.addressId ?? null,
+        input.externalStudentId ?? null,
       ]);
       const studentId = created.rows[0].student_id;
       const counselorId = scope.role === 'counselor' ? scope.counselorId : input.counselorId ?? null;
@@ -240,6 +256,7 @@ export class PgStudentRepository implements StudentRepositoryPort {
         hasOwn(input, 'schoolLevel'), input.schoolLevel ?? null,
         hasSchoolInput, resolvedSchoolId ?? null,
         hasOwn(input, 'addressId'), input.addressId ?? null,
+        hasOwn(input, 'externalStudentId'), input.externalStudentId ?? null,
       ]);
       if ((result.rowCount ?? 0) === 0) {
         await client.query('ROLLBACK');
@@ -312,11 +329,21 @@ export class PgStudentRepository implements StudentRepositoryPort {
         SELECT student_id
         FROM Students
         WHERE ($1::UUID IS NOT NULL AND student_id = $1::UUID)
-           OR ($2::VARCHAR IS NOT NULL AND LOWER(email) = LOWER($2::VARCHAR))
-           OR ($3::VARCHAR IS NOT NULL AND phone_number = $3::VARCHAR)
-        ORDER BY CASE WHEN student_id = $1::UUID THEN 0 ELSE 1 END, created_at DESC
+           OR ($2::VARCHAR IS NOT NULL AND UPPER(external_student_id) = UPPER($2::VARCHAR))
+           OR ($3::VARCHAR IS NOT NULL AND LOWER(email) = LOWER($3::VARCHAR))
+           OR ($4::VARCHAR IS NOT NULL AND phone_number = $4::VARCHAR)
+        ORDER BY CASE
+          WHEN student_id = $1::UUID THEN 0
+          WHEN UPPER(external_student_id) = UPPER($2::VARCHAR) THEN 1
+          ELSE 2
+        END, created_at DESC
         LIMIT 1
-      `, [input.studentId ?? null, input.studentEmail ?? null, input.studentPhoneNumber ?? null]);
+      `, [
+        input.studentId ?? null,
+        input.externalStudentId ?? null,
+        input.studentEmail ?? null,
+        input.studentPhoneNumber ?? null,
+      ]);
       if (!student.rows[0]) {
         throw new AppError(404, 'Student from assignment sheet was not found.', 'ASSIGNMENT_STUDENT_NOT_FOUND');
       }
@@ -325,17 +352,41 @@ export class PgStudentRepository implements StudentRepositoryPort {
         SELECT counselor_id
         FROM Counselors
         WHERE ($1::UUID IS NOT NULL AND counselor_id = $1::UUID)
-           OR ($2::VARCHAR IS NOT NULL AND LOWER(email) = LOWER($2::VARCHAR))
-           OR ($3::VARCHAR IS NOT NULL AND phone_number = $3::VARCHAR)
-        ORDER BY CASE WHEN counselor_id = $1::UUID THEN 0 ELSE 1 END, created_at DESC
+           OR ($2::VARCHAR IS NOT NULL AND UPPER(external_counselor_id) = UPPER($2::VARCHAR))
+           OR ($3::VARCHAR IS NOT NULL AND LOWER(email) = LOWER($3::VARCHAR))
+           OR ($4::VARCHAR IS NOT NULL AND phone_number = $4::VARCHAR)
+        ORDER BY CASE
+          WHEN counselor_id = $1::UUID THEN 0
+          WHEN UPPER(external_counselor_id) = UPPER($2::VARCHAR) THEN 1
+          ELSE 2
+        END, created_at DESC
         LIMIT 1
-      `, [input.counselorId ?? null, input.counselorEmail ?? null, input.counselorPhoneNumber ?? null]);
+      `, [
+        input.counselorId ?? null,
+        input.externalCounselorId ?? null,
+        input.counselorEmail ?? null,
+        input.counselorPhoneNumber ?? null,
+      ]);
       if (!counselor.rows[0]) {
         throw new AppError(404, 'Counselor from assignment sheet was not found.', 'ASSIGNMENT_COUNSELOR_NOT_FOUND');
       }
 
       const studentId = student.rows[0].student_id;
       const counselorId = counselor.rows[0].counselor_id;
+      if (input.externalStudentId) {
+        await client.query(`
+          UPDATE Students
+          SET external_student_id = $2::VARCHAR, updated_at = now()
+          WHERE student_id = $1::UUID
+        `, [studentId, input.externalStudentId]);
+      }
+      if (input.externalCounselorId) {
+        await client.query(`
+          UPDATE Counselors
+          SET external_counselor_id = $2::VARCHAR, updated_at = now()
+          WHERE counselor_id = $1::UUID
+        `, [counselorId, input.externalCounselorId]);
+      }
       await client.query('SELECT pg_advisory_xact_lock(hashtext($1::TEXT))', [studentId]);
 
       const current = await client.query<{ assignment_id: string }>(`

@@ -25,6 +25,7 @@ export type UpdateCounselorInput = Partial<CreateCounselorInput>;
 
 export interface CounselorProfileRow {
   counselor_id: string;
+  external_counselor_id: string | null;
   first_name: string;
   last_name: string;
   gender: string | null;
@@ -103,6 +104,7 @@ export interface HrComplianceSummary {
 
 export interface CounselorDto {
   id: string;
+  externalId: string | null;
   firstName: string;
   lastName: string;
   name: string;

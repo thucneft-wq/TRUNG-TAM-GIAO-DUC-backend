@@ -3,10 +3,15 @@ import { schoolLevels, studentStatuses } from '../types/student.js';
 
 const nullableUuid = z.string().uuid().nullable().optional();
 const nullableDate = z.string().date().nullable().optional();
+const nullableExternalId = z.string().trim().min(1).max(50)
+  .regex(/^[A-Za-z0-9][A-Za-z0-9_-]*$/)
+  .nullable()
+  .optional();
 
 export const studentIdSchema = z.string().uuid();
 
 export const createStudentSchema = z.object({
+  externalStudentId: nullableExternalId,
   firstName: z.string().trim().min(1).max(100),
   lastName: z.string().trim().min(1).max(100),
   gender: z.string().trim().max(20).nullable().optional(),

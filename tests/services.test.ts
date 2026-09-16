@@ -222,6 +222,7 @@ test('overview CSV does not expose small-sample analytics', async () => {
 
 const studentRow: StudentRow = {
   student_id: '20000000-0000-4000-8000-000000000001',
+  external_student_id: 'HS-01',
   first_name: 'Dev',
   last_name: 'Student',
   gender: null,
@@ -242,7 +243,7 @@ const studentRow: StudentRow = {
 const createStudentRepository = (): StudentRepositoryPort => ({
   list: async () => [studentRow],
   getById: async () => studentRow,
-  findByContact: async () => null,
+  findBySyncIdentifier: async () => null,
   create: async () => studentRow,
   update: async () => studentRow,
   deactivate: async () => true,
@@ -255,6 +256,7 @@ test('student service maps only the scoped repository result', async () => {
     counselorId: studentRow.assigned_counselor_id,
   });
   assert.equal(students.length, 1);
+  assert.equal(students[0].externalId, 'HS-01');
   assert.equal(students[0].name, 'Dev Student');
   assert.equal(students[0].schoolLevel, 'THCS');
   assert.equal(students[0].schoolName, 'Trường THCS Mẫu');
@@ -279,7 +281,7 @@ test('Google Sheets inactive status soft-deletes an existing student', async () 
   let deactivatedId = '';
   let updateCalled = false;
   const repository = createStudentRepository();
-  repository.findByContact = async () => studentRow;
+  repository.findBySyncIdentifier = async () => studentRow;
   repository.deactivate = async (id) => {
     deactivatedId = id;
     return true;
@@ -309,6 +311,7 @@ test('Google Sheets inactive status soft-deletes an existing student', async () 
 
 const analyticsRow: CounselorAnalyticsRow = {
   counselor_id: '10000000-0000-4000-8000-000000000001',
+  external_counselor_id: 'TTV-01',
   first_name: 'Dev',
   last_name: 'Counselor',
   gender: null,
@@ -364,6 +367,7 @@ const createMockRepository = (): CounselorRepositoryPort => ({
 test('counselor service reads and maps anonymous analytics', async () => {
   const service = new CounselorService(createMockRepository());
   const counselor = await service.getById(analyticsRow.counselor_id, 'this_month');
+  assert.equal(counselor.externalId, 'TTV-01');
   assert.equal(counselor.name, 'Dev Counselor');
   assert.equal(counselor.kpis.length, 5);
   assert.equal(counselor.overallStatus, 'Pass');

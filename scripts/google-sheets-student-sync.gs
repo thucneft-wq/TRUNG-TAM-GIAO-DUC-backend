@@ -147,6 +147,7 @@ function syncStudentRow_(sheet, rowNumber) {
   const responseEmail = optionalText_(row['Email Address']);
 
   postStudent_({
+    externalStudentId: optionalText_(row.student_id || row['Student ID']) || null,
     firstName,
     lastName,
     gender: normalizeGender_(row['Giới tính']),

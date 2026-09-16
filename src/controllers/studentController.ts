@@ -4,7 +4,9 @@ import {
   studentIdSchema,
   updateStudentSchema,
 } from '../schemas/studentSchemas.js';
-import { googleSheetsAssignmentSchema } from '../schemas/googleSheetsSchemas.js';
+import {
+  googleSheetsAssignmentSchema,
+} from '../schemas/googleSheetsSchemas.js';
 import type { AnalyticsServicePort, StudentServicePort } from '../types/services.js';
 import type { StudentAccessScope } from '../types/student.js';
 
