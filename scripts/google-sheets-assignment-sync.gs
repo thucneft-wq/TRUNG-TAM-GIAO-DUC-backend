@@ -128,14 +128,8 @@ function syncAssignmentRow_(sheet, rowNumber) {
 
   const payload = {
     externalStudentId,
-    studentEmail: assignmentNull_(student.email),
-    studentPhoneNumber: assignmentNull_(student.phone_number),
     externalCounselorId,
-    counselorEmail: assignmentNull_(counselor.email),
-    counselorPhoneNumber: assignmentNull_(counselor.phone_number),
     status: assignmentStatus_(row.status),
-    assignedAt: assignmentIsoDate_(row.created_at || row.assigned_at),
-    endedAt: assignmentIsoDate_(row.updated_at || row.ended_at),
     caseWeight: assignmentNumber_(row.case_weight),
   };
   Object.keys(payload).forEach((key) => payload[key] === null && delete payload[key]);

@@ -49,6 +49,7 @@ SELECT
     school.school_name,
     s.address_id,
     assigned.counselor_id AS assigned_counselor_id,
+    assigned.counselor_external_id AS assigned_counselor_external_id,
     assigned.counselor_name AS assigned_counselor_name,
     assigned.assignment_status,
     assigned.ended_at AS assignment_ended_at,
@@ -59,6 +60,7 @@ LEFT JOIN Schools school ON school.school_id = s.school_id
 LEFT JOIN LATERAL (
     SELECT
         car.counselor_id,
+        c.external_counselor_id AS counselor_external_id,
         CONCAT_WS(' ', c.first_name, c.last_name) AS counselor_name,
         car.status AS assignment_status,
         car.ended_at
