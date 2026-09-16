@@ -550,6 +550,30 @@ export const openApiDocument = {
         },
       },
     },
+    '/api/integrations/google-sheets/feedbacks': {
+      post: {
+        tags: ['Integrations'],
+        summary: 'Create or update counseling feedback from Google Sheets',
+        operationId: 'syncGoogleSheetsFeedback',
+        security: syncSecurity,
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: { $ref: '#/components/schemas/GoogleSheetsFeedback' },
+            },
+          },
+        },
+        responses: {
+          '200': response('Existing feedback synchronized.', { $ref: '#/components/schemas/FeedbackSyncResponse' }),
+          '201': response('New feedback synchronized.', { $ref: '#/components/schemas/FeedbackSyncResponse' }),
+          '400': errorResponse('Request validation failed.'),
+          '401': errorResponse('Synchronization secret is invalid.'),
+          '404': errorResponse('The referenced booking or session was not found.'),
+          '503': errorResponse('Synchronization is not configured.'),
+        },
+      },
+    },
   },
   components: {
     securitySchemes: {
@@ -806,6 +830,51 @@ export const openApiDocument = {
             type: 'string',
             enum: ['PENDING_VERIFICATION', 'ACTIVE', 'LOCKED', 'SUSPENDED', 'DISABLED'],
             default: 'ACTIVE',
+          },
+        },
+      },
+      GoogleSheetsFeedback: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['rating'],
+        properties: {
+          feedbackId: { type: 'string', format: 'uuid' },
+          sessionId: { type: 'string', format: 'uuid' },
+          bookingId: { type: 'string', format: 'uuid' },
+          rating: { type: 'integer', minimum: 1, maximum: 5 },
+          comment: { type: 'string', maxLength: 5000 },
+          category: { type: 'string', maxLength: 100 },
+          createdAt: { type: 'string', format: 'date-time' },
+        },
+        description: 'Provide sessionId or bookingId. Repeated syncs update the feedback for that session.',
+      },
+      FeedbackSyncResponse: {
+        type: 'object',
+        required: ['feedback'],
+        properties: {
+          feedback: {
+            type: 'object',
+            required: [
+              'feedbackId',
+              'sessionId',
+              'bookingId',
+              'studentId',
+              'counselorId',
+              'rating',
+              'createdAt',
+              'created',
+            ],
+            properties: {
+              feedbackId: { type: 'string', format: 'uuid' },
+              sessionId: { type: 'string', format: 'uuid' },
+              bookingId: { type: 'string', format: 'uuid' },
+              studentId: { type: 'string', format: 'uuid' },
+              counselorId: { type: 'string', format: 'uuid' },
+              rating: { type: 'integer', minimum: 1, maximum: 5 },
+              category: { type: 'string', nullable: true },
+              createdAt: { type: 'string', format: 'date-time' },
+              created: { type: 'boolean' },
+            },
           },
         },
       },

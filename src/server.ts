@@ -11,12 +11,14 @@ import { createDatabasePool } from './database/pool.js';
 import { PgAnalyticsRepository } from './repositories/analyticsRepository.js';
 import { PgCounselorRepository } from './repositories/counselorRepository.js';
 import { PgCounselorAccountRepository } from './repositories/counselorAccountRepository.js';
+import { PgFeedbackRepository } from './repositories/feedbackRepository.js';
 import { PgStudentRepository } from './repositories/studentRepository.js';
 import { AnalyticsService } from './services/analyticsService.js';
 import { AuthService } from './services/authService.js';
 import { CounselorService } from './services/counselorService.js';
 import { CounselorAccountService } from './services/counselorAccountService.js';
 import { DashboardService } from './services/dashboardService.js';
+import { FeedbackService } from './services/feedbackService.js';
 import { StudentService } from './services/studentService.js';
 
 // Keep a direct runtime import so Vercel recognizes this file as the Express entrypoint.
@@ -28,6 +30,7 @@ const counselorRepository = new PgCounselorRepository(pool);
 const counselorAccountRepository = new PgCounselorAccountRepository(pool);
 const analyticsRepository = new PgAnalyticsRepository(pool);
 const studentRepository = new PgStudentRepository(pool);
+const feedbackRepository = new PgFeedbackRepository(pool);
 const counselorService = new CounselorService(counselorRepository);
 const analyticsService = new AnalyticsService(
   analyticsRepository,
@@ -49,6 +52,7 @@ const app = createApp({
   counselorAccountService: new CounselorAccountService(counselorAccountRepository),
   dashboardService: new DashboardService(counselorRepository, counselorService),
   analyticsService,
+  feedbackService: new FeedbackService(feedbackRepository),
   studentService,
   checkDatabase: createDatabaseHealthCheck(pool),
   jwtSecret: config.jwtSecret,

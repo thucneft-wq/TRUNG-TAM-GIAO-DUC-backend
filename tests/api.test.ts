@@ -86,6 +86,19 @@ const createDependencies = (): AppDependencies => ({
       created: true,
     }),
   },
+  feedbackService: {
+    syncFromGoogleSheets: async (input) => ({
+      feedbackId: '40000000-0000-4000-8000-000000000001',
+      sessionId: input.sessionId ?? '50000000-0000-4000-8000-000000000001',
+      bookingId: input.bookingId ?? '60000000-0000-4000-8000-000000000001',
+      studentId: STUDENT_ID,
+      counselorId: COUNSELOR_ID,
+      rating: input.rating,
+      category: input.category ?? 'positive',
+      createdAt: '2026-09-16T00:00:00.000Z',
+      created: true,
+    }),
+  },
   studentService: {
     list: async () => [studentFixture],
     getById: async () => studentFixture,
@@ -331,6 +344,7 @@ test('Swagger UI and its OpenAPI document describe the live API routes', async (
   assert.ok(document.paths['/api/auth/login']);
   assert.ok(document.paths['/api/admin/counselors']);
   assert.ok(document.paths['/api/students']);
+  assert.ok(document.paths['/api/integrations/google-sheets/feedbacks']);
 
   const uiResponse = await request(createDependencies(), '/api/docs');
   assert.equal(uiResponse.status, 200);
@@ -396,6 +410,61 @@ test('Google Sheets webhook synchronizes Counselor login accounts without echoin
   const payload = await response.json();
   assert.equal('password' in payload.account, false);
   assert.equal('passwordHash' in payload.account, false);
+});
+
+test('Google Sheets webhook synchronizes feedback and requires a session reference', async () => {
+  let receivedRating = 0;
+  const dependencies = createDependencies();
+  dependencies.feedbackService.syncFromGoogleSheets = async (input) => {
+    receivedRating = input.rating;
+    return {
+      feedbackId: '40000000-0000-4000-8000-000000000001',
+      sessionId: '50000000-0000-4000-8000-000000000001',
+      bookingId: input.bookingId ?? '60000000-0000-4000-8000-000000000001',
+      studentId: STUDENT_ID,
+      counselorId: COUNSELOR_ID,
+      rating: input.rating,
+      category: 'positive',
+      createdAt: '2026-09-16T00:00:00.000Z',
+      created: true,
+    };
+  };
+
+  const invalid = await request(
+    dependencies,
+    '/api/integrations/google-sheets/feedbacks',
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${SYNC_SECRET}`,
+      },
+      body: JSON.stringify({ rating: 5 }),
+    },
+  );
+  assert.equal(invalid.status, 400);
+
+  const response = await request(
+    dependencies,
+    '/api/integrations/google-sheets/feedbacks',
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${SYNC_SECRET}`,
+      },
+      body: JSON.stringify({
+        bookingId: '60000000-0000-4000-8000-000000000001',
+        rating: 5,
+        comment: 'Hữu ích',
+      }),
+    },
+  );
+  assert.equal(response.status, 201);
+  assert.equal(receivedRating, 5);
+  const payload = await response.json();
+  assert.equal(payload.feedback.category, 'positive');
+  assert.equal('comment' in payload.feedback, false);
 });
 
 test('analytics export returns a CSV attachment and records an audit event', async () => {

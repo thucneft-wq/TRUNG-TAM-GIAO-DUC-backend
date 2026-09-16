@@ -28,3 +28,25 @@ export interface CounselorAccountSyncResult {
   status: CounselorAccountStatus;
   created: boolean;
 }
+
+export interface GoogleSheetsFeedbackInput {
+  feedbackId?: string;
+  sessionId?: string;
+  bookingId?: string;
+  rating: number;
+  comment?: string | null;
+  category?: string | null;
+  createdAt?: string;
+}
+
+export interface FeedbackSyncResult {
+  feedbackId: string;
+  sessionId: string;
+  bookingId: string;
+  studentId: string;
+  counselorId: string;
+  rating: number;
+  category: string | null;
+  createdAt: string;
+  created: boolean;
+}

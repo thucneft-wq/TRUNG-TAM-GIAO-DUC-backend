@@ -13,8 +13,10 @@ import type {
 } from './student.js';
 import type {
   CounselorAccountSyncResult,
+  FeedbackSyncResult,
   GoogleSheetsCounselorAccountInput,
   GoogleSheetsCounselorInput,
+  GoogleSheetsFeedbackInput,
 } from './googleSheets.js';
 
 export type InternalRole = 'admin' | 'counselor';
@@ -41,6 +43,10 @@ export interface CounselorAccountServicePort {
   syncFromGoogleSheets(
     input: GoogleSheetsCounselorAccountInput,
   ): Promise<CounselorAccountSyncResult>;
+}
+
+export interface FeedbackServicePort {
+  syncFromGoogleSheets(input: GoogleSheetsFeedbackInput): Promise<FeedbackSyncResult>;
 }
 
 export interface StudentServicePort {

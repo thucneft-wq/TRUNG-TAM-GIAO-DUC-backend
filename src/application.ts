@@ -21,6 +21,7 @@ import type {
   CounselorServicePort,
   CounselorAccountServicePort,
   DashboardServicePort,
+  FeedbackServicePort,
   StudentServicePort,
 } from './types/services.js';
 import { AppError } from './utils/appError.js';
@@ -31,6 +32,7 @@ export interface AppDependencies {
   counselorAccountService: CounselorAccountServicePort;
   dashboardService: DashboardServicePort;
   analyticsService: AnalyticsServicePort;
+  feedbackService: FeedbackServicePort;
   studentService: StudentServicePort;
   checkDatabase: () => Promise<void>;
   jwtSecret: string;
@@ -50,6 +52,7 @@ export const createApp = (dependencies: AppDependencies): Express => {
     dependencies.counselorService,
     dependencies.counselorAccountService,
     dependencies.analyticsService,
+    dependencies.feedbackService,
   );
   const dashboardController = new DashboardController(dependencies.dashboardService);
   const analyticsController = new AnalyticsController(dependencies.analyticsService);

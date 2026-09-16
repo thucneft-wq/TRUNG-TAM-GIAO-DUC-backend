@@ -2,11 +2,13 @@ import type { Request, Response } from 'express';
 import {
   googleSheetsCounselorAccountSchema,
   googleSheetsCounselorSchema,
+  googleSheetsFeedbackSchema,
 } from '../schemas/googleSheetsSchemas.js';
 import type {
   AnalyticsServicePort,
   CounselorAccountServicePort,
   CounselorServicePort,
+  FeedbackServicePort,
 } from '../types/services.js';
 
 export class GoogleSheetsController {
@@ -14,6 +16,7 @@ export class GoogleSheetsController {
     private readonly counselorService: CounselorServicePort,
     private readonly counselorAccountService: CounselorAccountServicePort,
     private readonly analyticsService: AnalyticsServicePort,
+    private readonly feedbackService: FeedbackServicePort,
   ) {}
 
   syncCounselor = async (request: Request, response: Response): Promise<void> => {
@@ -38,5 +41,17 @@ export class GoogleSheetsController {
       account.userId,
     );
     response.status(account.created ? 201 : 200).json({ account });
+  };
+
+  syncFeedback = async (request: Request, response: Response): Promise<void> => {
+    const input = googleSheetsFeedbackSchema.parse(request.body);
+    const feedback = await this.feedbackService.syncFromGoogleSheets(input);
+    await this.analyticsService.recordAudit(
+      'google-sheets',
+      feedback.created ? 'SYNC_CREATE_FEEDBACK' : 'SYNC_UPDATE_FEEDBACK',
+      'Feedback',
+      feedback.feedbackId,
+    );
+    response.status(feedback.created ? 201 : 200).json({ feedback });
   };
 }

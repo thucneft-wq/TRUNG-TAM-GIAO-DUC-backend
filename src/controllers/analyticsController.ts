@@ -31,7 +31,10 @@ export class AnalyticsController {
   };
 
   feedback = async (request: Request, response: Response): Promise<void> => {
-    response.status(200).json(await this.analyticsService.getFeedback(parseFilters(request.query)));
+    response
+      .status(200)
+      .setHeader('Cache-Control', 'no-store')
+      .json(await this.analyticsService.getFeedback(parseFilters(request.query)));
   };
 
   export = async (request: Request, response: Response): Promise<void> => {

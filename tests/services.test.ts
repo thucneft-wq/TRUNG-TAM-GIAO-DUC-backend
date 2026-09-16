@@ -11,10 +11,12 @@ import {
 } from '../src/repositories/counselorRepository.js';
 import type { AnalyticsRepositoryPort } from '../src/repositories/analyticsRepository.js';
 import type { StudentRepositoryPort } from '../src/repositories/studentRepository.js';
+import type { FeedbackRepositoryPort } from '../src/repositories/feedbackRepository.js';
 import { AnalyticsService } from '../src/services/analyticsService.js';
 import { AuthService } from '../src/services/authService.js';
 import { CounselorService } from '../src/services/counselorService.js';
 import { StudentService } from '../src/services/studentService.js';
+import { FeedbackService } from '../src/services/feedbackService.js';
 import type { AnalyticsFilters } from '../src/types/analytics.js';
 import type { StudentRow } from '../src/types/student.js';
 import type {
@@ -401,4 +403,46 @@ test('update and deactivate SQL use placeholders and soft-delete status', () => 
   assert.match(DEACTIVATE_COUNSELOR_SQL, /SET status = 'INACTIVE'/);
   assert.match(DEACTIVATE_COUNSELOR_SQL, /WHERE counselor_id = \$1::UUID/);
   assert.doesNotMatch(DEACTIVATE_COUNSELOR_SQL, /DELETE FROM/i);
+});
+
+test('feedback synchronization derives sentiment and keeps Sheet retries idempotent', async () => {
+  let receivedCategory: string | null | undefined;
+  const repository: FeedbackRepositoryPort = {
+    syncFromGoogleSheets: async (input) => {
+      receivedCategory = input.category;
+      return {
+        feedbackId: '40000000-0000-4000-8000-000000000001',
+        sessionId: '50000000-0000-4000-8000-000000000001',
+        bookingId: input.bookingId ?? '60000000-0000-4000-8000-000000000001',
+        studentId: '20000000-0000-4000-8000-000000000001',
+        counselorId: '10000000-0000-4000-8000-000000000001',
+        rating: input.rating,
+        category: input.category ?? null,
+        createdAt: '2026-09-16T00:00:00.000Z',
+        created: false,
+      };
+    },
+  };
+  const result = await new FeedbackService(repository).syncFromGoogleSheets({
+    bookingId: '60000000-0000-4000-8000-000000000001',
+    rating: 5,
+    comment: '  Hữu ích  ',
+  });
+
+  assert.equal(receivedCategory, 'positive');
+  assert.equal(result.created, false);
+});
+
+test('feedback synchronization rejects an unknown counseling session', async () => {
+  const repository: FeedbackRepositoryPort = {
+    syncFromGoogleSheets: async () => null,
+  };
+
+  await assert.rejects(
+    () => new FeedbackService(repository).syncFromGoogleSheets({
+      bookingId: '60000000-0000-4000-8000-000000000001',
+      rating: 3,
+    }),
+    (error: unknown) => error instanceof AppError && error.code === 'FEEDBACK_SESSION_NOT_FOUND',
+  );
 });

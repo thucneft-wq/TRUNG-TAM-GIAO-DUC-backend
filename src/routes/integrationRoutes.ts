@@ -25,5 +25,10 @@ export const createIntegrationRouter = (
     createGoogleSheetsAuthMiddleware(googleSheetsSyncSecret),
     asyncHandler(googleSheetsController.syncCounselorAccount),
   );
+  router.post(
+    '/google-sheets/feedbacks',
+    createGoogleSheetsAuthMiddleware(googleSheetsSyncSecret),
+    asyncHandler(googleSheetsController.syncFeedback),
+  );
   return router;
 };
