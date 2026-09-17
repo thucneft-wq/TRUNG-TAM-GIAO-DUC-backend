@@ -2,6 +2,7 @@ import type { Pool } from 'pg';
 import type {
   CounselorAnalyticsRow,
   CounselorProfileRow,
+  CounselorReconcileResult,
   CreateCounselorInput,
   DashboardCountsRow,
   DashboardTrendRow,
@@ -20,6 +21,9 @@ export interface CounselorRepositoryPort {
   syncFromGoogleSheets(
     input: GoogleSheetsCounselorInput,
   ): Promise<{ profile: CounselorProfileRow; created: boolean }>;
+  reconcileActiveExternalIds(activeExternalCounselorIds: string[]): Promise<
+    CounselorReconcileResult & { counselorIds: string[] }
+  >;
   getDashboardCounts(range: PeriodRange): Promise<DashboardCountsRow>;
   getDashboardTrends(range: PeriodRange): Promise<DashboardTrendRow[]>;
 }
@@ -346,6 +350,60 @@ export class PgCounselorRepository implements CounselorRepositoryPort {
   async deactivate(id: string): Promise<boolean> {
     const result = await this.pool.query(DEACTIVATE_COUNSELOR_SQL, [id]);
     return (result.rowCount ?? 0) > 0;
+  }
+
+  async reconcileActiveExternalIds(activeExternalCounselorIds: string[]): Promise<
+    CounselorReconcileResult & { counselorIds: string[] }
+  > {
+    const normalizedIds = [...new Set(
+      activeExternalCounselorIds.map((id) => id.trim().toUpperCase()).filter(Boolean),
+    )];
+    const result = await this.pool.query<{
+      deactivated_counselors: number;
+      closed_assignments: number;
+      counselor_ids: string[] | null;
+    }>(`
+      WITH stale AS (
+        SELECT counselor_id
+        FROM Counselors
+        WHERE UPPER(status) IN ('ACTIVE', 'ON_LEAVE')
+          AND (
+            external_counselor_id IS NULL
+            OR NOT (UPPER(external_counselor_id) = ANY($1::TEXT[]))
+          )
+      ),
+      ended_records AS (
+        UPDATE Counselor_Assignment_Records car
+        SET status = 'INACTIVE', ended_at = COALESCE(car.ended_at, now()), updated_at = now()
+        WHERE car.counselor_id IN (SELECT counselor_id FROM stale)
+          AND UPPER(car.status) = 'ACTIVE'
+          AND car.ended_at IS NULL
+        RETURNING car.assignment_id
+      ),
+      ended_assignments AS (
+        UPDATE Counselor_Assignments ca
+        SET status = 'INACTIVE', updated_at = now()
+        WHERE ca.assignment_id IN (SELECT assignment_id FROM ended_records)
+          AND UPPER(ca.status) = 'ACTIVE'
+        RETURNING ca.assignment_id
+      ),
+      deactivated AS (
+        UPDATE Counselors c
+        SET status = 'INACTIVE', updated_at = now()
+        WHERE c.counselor_id IN (SELECT counselor_id FROM stale)
+        RETURNING c.counselor_id
+      )
+      SELECT
+        (SELECT COUNT(*)::INT FROM deactivated) AS deactivated_counselors,
+        (SELECT COUNT(*)::INT FROM ended_assignments) AS closed_assignments,
+        (SELECT ARRAY_AGG(counselor_id) FROM deactivated) AS counselor_ids
+    `, [normalizedIds]);
+    const row = result.rows[0];
+    return {
+      deactivatedCounselors: Number(row?.deactivated_counselors ?? 0),
+      closedAssignments: Number(row?.closed_assignments ?? 0),
+      counselorIds: row?.counselor_ids ?? [],
+    };
   }
 
   async syncFromGoogleSheets(

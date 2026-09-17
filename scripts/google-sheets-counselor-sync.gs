@@ -81,7 +81,11 @@ function handleCounselorEdit(event) {
 function syncAllCounselors() {
   const sheet = SpreadsheetApp.getActive().getSheetByName(COUNSELOR_FORM_SHEET_);
   if (!sheet) throw new Error(`Không tìm thấy tab ${COUNSELOR_FORM_SHEET_}.`);
-  if (sheet.getLastRow() <= 1) return;
+  if (sheet.getLastRow() <= 1) {
+    counselorPostReconcile_(counselorCurrentOfficialIds_());
+    counselorRefreshDeletionSnapshot_();
+    return;
+  }
   const headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getDisplayValues()[0];
   const firstNameIndex = headers.indexOf('Tên');
   const lastNameIndex = headers.indexOf('Họ');
@@ -91,6 +95,7 @@ function syncAllCounselors() {
       syncCounselorRow_(sheet, index + 2);
     }
   });
+  counselorPostReconcile_(counselorCurrentOfficialIds_());
   counselorRefreshDeletionSnapshot_();
 }
 
@@ -276,6 +281,7 @@ function counselorPayload_(row, externalCounselorId, firstName, lastName, status
 }
 
 function counselorHandleSheetRowDeletion_() {
+  counselorPostReconcile_(counselorCurrentOfficialIds_());
   const spreadsheet = SpreadsheetApp.getActive();
   const snapshot = spreadsheet.getSheetByName(COUNSELOR_SNAPSHOT_SHEET_);
   if (!snapshot || snapshot.getLastRow() <= 1) {
@@ -327,6 +333,14 @@ function counselorHandleSheetRowDeletion_() {
     });
   });
   counselorRefreshDeletionSnapshot_();
+}
+
+function reconcileActiveCounselorsFromOfficialSheet() {
+  const result = counselorPostReconcile_(counselorCurrentOfficialIds_());
+  counselorRefreshDeletionSnapshot_();
+  console.log(
+    `Đã chuyển ${Number(result.deactivatedCounselors || 0)} tư vấn viên không còn trên Sheet sang INACTIVE.`,
+  );
 }
 
 function counselorRefreshDeletionSnapshot_() {
@@ -434,6 +448,31 @@ function counselorPost_(payload) {
   if (response.getResponseCode() < 200 || response.getResponseCode() >= 300) {
     throw new Error(`Backend trả về HTTP ${response.getResponseCode()}: ${response.getContentText()}`);
   }
+}
+
+function counselorPostReconcile_(activeExternalCounselorIds) {
+  const properties = PropertiesService.getScriptProperties();
+  const configuredBase = counselorText_(
+    properties.getProperty('BACKEND_SYNC_BASE_URL') || properties.getProperty('BACKEND_BASE_URL'),
+  ).replace(/\/$/, '');
+  const secret = counselorText_(properties.getProperty('GOOGLE_SHEETS_SYNC_SECRET'));
+  if (!configuredBase || !secret) throw new Error('Thiếu cấu hình backend hoặc khóa đồng bộ.');
+  const endpoint = /\/integrations\/google-sheets$/i.test(configuredBase)
+    ? `${configuredBase}/counselors/reconcile`
+    : `${configuredBase}/integrations/google-sheets/counselors/reconcile`;
+  const response = UrlFetchApp.fetch(endpoint, {
+    method: 'post',
+    contentType: 'application/json',
+    headers: { Authorization: `Bearer ${secret}` },
+    payload: JSON.stringify({ activeExternalCounselorIds }),
+    muteHttpExceptions: true,
+  });
+  const status = response.getResponseCode();
+  if (status < 200 || status >= 300) {
+    throw new Error(`Backend counselor reconcile trả về HTTP ${status}: ${response.getContentText()}`);
+  }
+  const text = response.getContentText();
+  return text ? JSON.parse(text) : { deactivatedCounselors: 0, closedAssignments: 0 };
 }
 
 function counselorStatus_(value) {

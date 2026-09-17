@@ -383,6 +383,11 @@ const createMockRepository = (): CounselorRepositoryPort => ({
   update: async () => profileRow,
   deactivate: async () => true,
   syncFromGoogleSheets: async () => ({ profile: profileRow, created: true }),
+  reconcileActiveExternalIds: async () => ({
+    deactivatedCounselors: 0,
+    closedAssignments: 0,
+    counselorIds: [],
+  }),
   getDashboardCounts: async () => ({
     total_students: 1,
     active_counselors: 1,

@@ -154,3 +154,9 @@ export const googleSheetsStudentReconcileSchema = z.object({
     z.string().trim().min(1).max(50).regex(/^[A-Za-z0-9][A-Za-z0-9_-]*$/),
   ).max(10000).default([]),
 }).strict();
+
+export const googleSheetsCounselorReconcileSchema = z.object({
+  activeExternalCounselorIds: z.array(
+    z.string().trim().min(1).max(50).regex(/^[A-Za-z0-9][A-Za-z0-9_-]*$/),
+  ).max(10000).default([]),
+}).strict();

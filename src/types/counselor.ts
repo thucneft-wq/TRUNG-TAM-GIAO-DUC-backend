@@ -172,3 +172,8 @@ export interface DashboardTrendRow {
   pending_bookings: number | string;
   cancelled_bookings: number | string;
 }
+
+export interface CounselorReconcileResult {
+  deactivatedCounselors: number;
+  closedAssignments: number;
+}

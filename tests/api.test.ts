@@ -82,6 +82,10 @@ const createDependencies = (): AppDependencies => ({
     update: async () => counselorFixture,
     deactivate: async () => undefined,
     syncFromGoogleSheets: async () => ({ counselor: counselorFixture, created: true }),
+    reconcileFromGoogleSheets: async () => ({
+      deactivatedCounselors: 0,
+      closedAssignments: 0,
+    }),
   },
   counselorAccountService: {
     syncFromGoogleSheets: async (input) => ({
@@ -426,6 +430,39 @@ test('Google Sheets webhook synchronizes Counselor profiles', async () => {
   );
   assert.equal(response.status, 201);
   assert.equal(synchronized, true);
+});
+
+test('Google Sheets reconciliation deactivates counselors missing from the official tab', async () => {
+  let receivedIds: string[] = ['unexpected'];
+  const dependencies = createDependencies();
+  dependencies.counselorService.reconcileFromGoogleSheets = async (activeIds) => {
+    receivedIds = activeIds;
+    return { deactivatedCounselors: 3, closedAssignments: 2 };
+  };
+  const body = JSON.stringify({ activeExternalCounselorIds: [] });
+
+  const unauthorized = await request(
+    dependencies,
+    '/api/integrations/google-sheets/counselors/reconcile',
+    { method: 'POST', headers: { 'Content-Type': 'application/json' }, body },
+  );
+  assert.equal(unauthorized.status, 401);
+
+  const authorized = await request(
+    dependencies,
+    '/api/integrations/google-sheets/counselors/reconcile',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${SYNC_SECRET}` },
+      body,
+    },
+  );
+  assert.equal(authorized.status, 200);
+  assert.deepEqual(receivedIds, []);
+  assert.deepEqual(await authorized.json(), {
+    deactivatedCounselors: 3,
+    closedAssignments: 2,
+  });
 });
 
 test('Google Sheets webhook synchronizes Counselor login accounts without echoing passwords', async () => {

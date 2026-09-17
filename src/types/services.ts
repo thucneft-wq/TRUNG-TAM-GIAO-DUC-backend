@@ -1,4 +1,10 @@
-import type { CreateCounselorInput, CounselorDto, ReportingPeriod, UpdateCounselorInput } from './counselor.js';
+import type {
+  CounselorReconcileResult,
+  CreateCounselorInput,
+  CounselorDto,
+  ReportingPeriod,
+  UpdateCounselorInput,
+} from './counselor.js';
 import type {
   AnalyticsExportType,
   AnalyticsFilterOptions,
@@ -40,6 +46,7 @@ export interface CounselorServicePort {
   syncFromGoogleSheets(
     input: GoogleSheetsCounselorInput,
   ): Promise<{ counselor: CounselorDto; created: boolean }>;
+  reconcileFromGoogleSheets(activeExternalCounselorIds: string[]): Promise<CounselorReconcileResult>;
 }
 
 export interface CounselorAccountServicePort {

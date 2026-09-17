@@ -248,6 +248,17 @@ export class CounselorService implements CounselorServicePort {
     await this.assignmentReconciler?.reconcileCounselorAssignments(id, 'INACTIVE');
   }
 
+  async reconcileFromGoogleSheets(activeExternalCounselorIds: string[]) {
+    const result = await this.repository.reconcileActiveExternalIds(activeExternalCounselorIds);
+    for (const counselorId of result.counselorIds) {
+      await this.assignmentReconciler?.reconcileCounselorAssignments(counselorId, 'INACTIVE');
+    }
+    return {
+      deactivatedCounselors: result.deactivatedCounselors,
+      closedAssignments: result.closedAssignments,
+    };
+  }
+
   async syncFromGoogleSheets(
     input: GoogleSheetsCounselorInput,
   ): Promise<{ counselor: CounselorDto; created: boolean }> {

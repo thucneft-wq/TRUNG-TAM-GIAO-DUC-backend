@@ -26,6 +26,11 @@ export const createIntegrationRouter = (
     asyncHandler(googleSheetsController.syncCounselor),
   );
   router.post(
+    '/google-sheets/counselors/reconcile',
+    createGoogleSheetsAuthMiddleware(googleSheetsSyncSecret),
+    asyncHandler(googleSheetsController.reconcileCounselors),
+  );
+  router.post(
     '/google-sheets/counselor-accounts',
     createGoogleSheetsAuthMiddleware(googleSheetsSyncSecret),
     asyncHandler(googleSheetsController.syncCounselorAccount),

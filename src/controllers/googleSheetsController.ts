@@ -1,6 +1,7 @@
 import type { Request, Response } from 'express';
 import {
   googleSheetsCounselorAccountSchema,
+  googleSheetsCounselorReconcileSchema,
   googleSheetsCounselorSchema,
   googleSheetsFeedbackSchema,
 } from '../schemas/googleSheetsSchemas.js';
@@ -41,6 +42,20 @@ export class GoogleSheetsController {
       account.userId,
     );
     response.status(account.created ? 201 : 200).json({ account });
+  };
+
+  reconcileCounselors = async (request: Request, response: Response): Promise<void> => {
+    const input = googleSheetsCounselorReconcileSchema.parse(request.body);
+    const result = await this.counselorService.reconcileFromGoogleSheets(
+      input.activeExternalCounselorIds,
+    );
+    await this.analyticsService.recordAudit(
+      'google-sheets',
+      'SYNC_RECONCILE_COUNSELORS',
+      'Counselor',
+      null,
+    );
+    response.status(200).json(result);
   };
 
   syncFeedback = async (request: Request, response: Response): Promise<void> => {
