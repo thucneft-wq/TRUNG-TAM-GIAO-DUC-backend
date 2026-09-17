@@ -24,6 +24,8 @@ export interface StudentRow {
   gender: string | null;
   phone_number: string;
   email: string | null;
+  parent_phone_number: string | null;
+  parent_email: string | null;
   date_of_birth: Date | string | null;
   status: string;
   school_level: SchoolLevel | null;
@@ -48,6 +50,8 @@ export interface StudentDto {
   gender: string | null;
   phoneNumber: string;
   email: string | null;
+  parentPhoneNumber: string | null;
+  parentEmail: string | null;
   dateOfBirth: string | null;
   status: StudentStatus;
   schoolLevel: SchoolLevel | null;
@@ -70,6 +74,8 @@ export interface CreateStudentInput {
   gender?: string | null;
   phoneNumber: string;
   email?: string | null;
+  parentPhoneNumber?: string | null;
+  parentEmail?: string | null;
   dateOfBirth?: string | null;
   status: StudentStatus;
   schoolLevel?: SchoolLevel | null;

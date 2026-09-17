@@ -46,6 +46,8 @@ const studentFixture: StudentDto = {
   gender: 'UNSPECIFIED',
   phoneNumber: '000-100-0001',
   email: 'student@example.invalid',
+  parentPhoneNumber: '0900000001',
+  parentEmail: 'parent@example.invalid',
   dateOfBirth: '2010-01-01',
   status: 'ACTIVE',
   schoolLevel: 'THCS',

@@ -233,6 +233,8 @@ const studentRow: StudentRow = {
   gender: null,
   phone_number: '000-100-0001',
   email: null,
+  parent_phone_number: '0900000001',
+  parent_email: 'parent@example.invalid',
   date_of_birth: new Date('2010-01-01T00:00:00+07:00'),
   status: 'ACTIVE',
   school_level: 'THCS',

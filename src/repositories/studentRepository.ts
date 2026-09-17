@@ -43,6 +43,8 @@ SELECT
     s.gender,
     s.phone_number,
     s.email,
+    parent_contact.phone_number AS parent_phone_number,
+    parent_contact.email AS parent_email,
     s.date_of_birth,
     s.status,
     s.school_level,
@@ -58,6 +60,15 @@ SELECT
     s.updated_at
 FROM Students s
 LEFT JOIN Schools school ON school.school_id = s.school_id
+LEFT JOIN LATERAL (
+    SELECT p.phone_number, p.email
+    FROM Student_Parents sp
+    JOIN Parents p ON p.parent_id = sp.parent_id
+    WHERE sp.student_id = s.student_id
+      AND UPPER(p.status) = 'ACTIVE'
+    ORDER BY sp.is_primary DESC, sp.created_at
+    LIMIT 1
+) parent_contact ON TRUE
 LEFT JOIN LATERAL (
     SELECT
         car.counselor_id,
@@ -164,6 +175,72 @@ const resolveSchoolId = async (
   return created.rows[0].school_id;
 };
 
+const syncPrimaryParent = async (
+  client: PoolClient,
+  studentId: string,
+  studentLastName: string,
+  parentPhoneNumber: string | null | undefined,
+  parentEmail: string | null | undefined,
+  hasPhoneInput = true,
+  hasEmailInput = true,
+): Promise<void> => {
+  if (!hasPhoneInput && !hasEmailInput) return;
+
+  const current = await client.query<{ parent_id: string }>(`
+    SELECT sp.parent_id
+    FROM Student_Parents sp
+    WHERE sp.student_id = $1::UUID
+    ORDER BY sp.is_primary DESC, sp.created_at
+    LIMIT 1
+    FOR UPDATE
+  `, [studentId]);
+
+  let parentId = current.rows[0]?.parent_id ?? null;
+  if (!parentId && (parentPhoneNumber || parentEmail)) {
+    const matched = await client.query<{ parent_id: string }>(`
+      SELECT parent_id
+      FROM Parents
+      WHERE ($1::VARCHAR IS NOT NULL AND phone_number = $1::VARCHAR)
+         OR ($2::VARCHAR IS NOT NULL AND LOWER(email) = LOWER($2::VARCHAR))
+      ORDER BY created_at
+      LIMIT 1
+      FOR UPDATE
+    `, [parentPhoneNumber ?? null, parentEmail ?? null]);
+    parentId = matched.rows[0]?.parent_id ?? null;
+
+    if (!parentId) {
+      const created = await client.query<{ parent_id: string }>(`
+        INSERT INTO Parents (first_name, last_name, phone_number, email, status)
+        VALUES ('Phụ huynh', $1::VARCHAR, $2::VARCHAR, $3::VARCHAR, 'ACTIVE')
+        RETURNING parent_id
+      `, [studentLastName || 'Học sinh', parentPhoneNumber ?? null, parentEmail ?? null]);
+      parentId = created.rows[0].parent_id;
+    }
+
+    await client.query(`
+      INSERT INTO Student_Parents (student_id, parent_id, relationship, is_primary)
+      VALUES ($1::UUID, $2::UUID, 'Phụ huynh', TRUE)
+      ON CONFLICT (student_id, parent_id) DO UPDATE SET is_primary = TRUE
+    `, [studentId, parentId]);
+  }
+
+  if (!parentId) return;
+  await client.query(`
+    UPDATE Parents
+    SET phone_number = CASE WHEN $2::BOOLEAN THEN $3::VARCHAR ELSE phone_number END,
+        email = CASE WHEN $4::BOOLEAN THEN $5::VARCHAR ELSE email END,
+        status = 'ACTIVE',
+        updated_at = now()
+    WHERE parent_id = $1::UUID
+  `, [
+    parentId,
+    hasPhoneInput,
+    parentPhoneNumber ?? null,
+    hasEmailInput,
+    parentEmail ?? null,
+  ]);
+};
+
 export class PgStudentRepository implements StudentRepositoryPort {
   constructor(private readonly pool: Pool) {}
 
@@ -225,8 +302,15 @@ export class PgStudentRepository implements StudentRepositoryPort {
         input.externalStudentId ?? null,
       ]);
       const studentId = created.rows[0].student_id;
-      const counselorId = scope.role === 'counselor' ? scope.counselorId : input.counselorId ?? null;
-      if (counselorId) await this.assignStudent(client, studentId, counselorId);
+      await syncPrimaryParent(
+        client,
+        studentId,
+        input.lastName,
+        input.parentPhoneNumber,
+        input.parentEmail,
+        hasOwn(input, 'parentPhoneNumber'),
+        hasOwn(input, 'parentEmail'),
+      );
       await client.query('COMMIT');
 
       const row = await this.getById(studentId, scope);
@@ -271,6 +355,15 @@ export class PgStudentRepository implements StudentRepositoryPort {
         await client.query('ROLLBACK');
         return null;
       }
+      await syncPrimaryParent(
+        client,
+        id,
+        input.lastName ?? '',
+        input.parentPhoneNumber,
+        input.parentEmail,
+        hasOwn(input, 'parentPhoneNumber'),
+        hasOwn(input, 'parentEmail'),
+      );
       await client.query('COMMIT');
       return this.getById(id, scope);
     } catch (error) {
@@ -396,6 +489,27 @@ export class PgStudentRepository implements StudentRepositoryPort {
 
       const studentId = student.rows[0].student_id;
       const counselorId = counselor.rows[0].counselor_id;
+      if (input.status === 'ACTIVE') {
+        const bookedSlot = await client.query(`
+          SELECT 1
+          FROM Bookings b
+          JOIN Availability_Slots slot
+            ON slot.availability_slot_id = b.availability_slot_id
+           AND slot.counselor_id = b.counselor_id
+          WHERE b.student_id = $1::UUID
+            AND b.counselor_id = $2::UUID
+            AND b.cancelled_at IS NULL
+            AND UPPER(b.status) IN ('PENDING', 'CONFIRMED', 'BOOKED', 'SCHEDULED', 'ACTIVE')
+          LIMIT 1
+        `, [studentId, counselorId]);
+        if ((bookedSlot.rowCount ?? 0) === 0) {
+          throw new AppError(
+            409,
+            'Student must choose an available slot before counselor assignment.',
+            'ASSIGNMENT_SLOT_REQUIRED',
+          );
+        }
+      }
       if (input.externalStudentId) {
         await client.query(`
           UPDATE Students
@@ -507,85 +621,10 @@ export class PgStudentRepository implements StudentRepositoryPort {
   }
 
   async ensureAutomaticAssignment(studentId: string): Promise<boolean> {
-    const client = await this.pool.connect();
-    try {
-      await client.query('BEGIN');
-      await client.query('SELECT pg_advisory_xact_lock(hashtext($1::TEXT))', [studentId]);
-
-      const student = await client.query<{ student_id: string }>(`
-        SELECT student_id FROM Students
-        WHERE student_id = $1::UUID AND UPPER(status) = 'ACTIVE'
-        FOR UPDATE
-      `, [studentId]);
-      if (!student.rows[0]) {
-        await client.query('COMMIT');
-        return false;
-      }
-
-      const current = await client.query<{ assignment_id: string }>(`
-        SELECT ca.assignment_id
-        FROM Counselor_Assignments ca
-        JOIN Counselor_Assignment_Records car ON car.assignment_id = ca.assignment_id
-        JOIN Counselors c ON c.counselor_id = car.counselor_id
-        WHERE ca.student_id = $1::UUID
-          AND UPPER(ca.status) = 'ACTIVE'
-          AND UPPER(car.status) = 'ACTIVE'
-          AND car.ended_at IS NULL
-          AND c.external_counselor_id IS NOT NULL
-          AND UPPER(c.status) IN ('ACTIVE', 'ON_LEAVE')
-        LIMIT 1
-      `, [studentId]);
-      if (current.rows[0]) {
-        await client.query('COMMIT');
-        return false;
-      }
-
-      const counselor = await client.query<{ counselor_id: string }>(`
-        SELECT c.counselor_id
-        FROM Counselors c
-        LEFT JOIN (
-          SELECT car.counselor_id, COUNT(*)::INT AS active_cases
-          FROM Counselor_Assignment_Records car
-          JOIN Counselor_Assignments ca ON ca.assignment_id = car.assignment_id
-          WHERE UPPER(car.status) = 'ACTIVE'
-            AND car.ended_at IS NULL
-            AND UPPER(ca.status) = 'ACTIVE'
-          GROUP BY car.counselor_id
-        ) load ON load.counselor_id = c.counselor_id
-        WHERE UPPER(c.status) = 'ACTIVE'
-          AND c.external_counselor_id IS NOT NULL
-        ORDER BY COALESCE(load.active_cases, 0), c.created_at, c.counselor_id
-        LIMIT 1
-        FOR UPDATE OF c SKIP LOCKED
-      `);
-      if (!counselor.rows[0]) {
-        await client.query('COMMIT');
-        return false;
-      }
-
-      await client.query(`
-        UPDATE Counselor_Assignment_Records car
-        SET status = 'INACTIVE', ended_at = COALESCE(car.ended_at, now()), updated_at = now()
-        FROM Counselor_Assignments ca
-        WHERE ca.assignment_id = car.assignment_id
-          AND ca.student_id = $1::UUID
-          AND UPPER(car.status) = 'ACTIVE'
-          AND car.ended_at IS NULL
-      `, [studentId]);
-      await client.query(`
-        UPDATE Counselor_Assignments
-        SET status = 'INACTIVE', updated_at = now()
-        WHERE student_id = $1::UUID AND UPPER(status) = 'ACTIVE'
-      `, [studentId]);
-      await this.assignStudent(client, studentId, counselor.rows[0].counselor_id);
-      await client.query('COMMIT');
-      return true;
-    } catch (error) {
-      await client.query('ROLLBACK');
-      throw error;
-    } finally {
-      client.release();
-    }
+    const result = await this.pool.query<{ assigned: boolean }>(`
+      SELECT reconcile_student_assignment_from_booking($1::UUID) AS assigned
+    `, [studentId]);
+    return result.rows[0]?.assigned === true;
   }
 
   async reconcileCounselorAssignments(
@@ -687,6 +726,17 @@ export class PgStudentRepository implements StudentRepositoryPort {
         AND UPPER(s.status) = 'ACTIVE'
         AND UPPER(c.status) = 'ACTIVE'
         AND c.external_counselor_id IS NOT NULL
+        AND EXISTS (
+          SELECT 1
+          FROM Bookings b
+          JOIN Availability_Slots slot
+            ON slot.availability_slot_id = b.availability_slot_id
+           AND slot.counselor_id = b.counselor_id
+          WHERE b.student_id = s.student_id
+            AND b.counselor_id = c.counselor_id
+            AND b.cancelled_at IS NULL
+            AND UPPER(b.status) IN ('PENDING', 'CONFIRMED', 'BOOKED', 'SCHEDULED', 'ACTIVE')
+        )
     `, [studentId, counselorId]);
     if ((eligible.rowCount ?? 0) === 0) {
       throw new AppError(

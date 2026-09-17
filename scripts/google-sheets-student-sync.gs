@@ -25,6 +25,8 @@ const STUDENT_STATUS_INACTIVE_LABEL = 'Ngừng theo dõi';
 const STUDENT_EXTERNAL_ID_HEADER = 'Mã học sinh';
 const STUDENT_ASSIGNED_COUNSELOR_HEADER = 'Tư vấn viên phụ trách';
 const STUDENT_SYNC_STATUS_HEADER = 'Trạng thái đồng bộ';
+const STUDENT_PARENT_PHONE_ENTITY_HEADER = 'parent_phone_number';
+const STUDENT_PARENT_EMAIL_ENTITY_HEADER = 'parent_email';
 
 /**
  * Run once to add the Sheet-side soft-delete control to both student tabs.
@@ -85,6 +87,7 @@ function setupStudentStatusColumns() {
     });
     sheet.getRange(2, statusColumn, statuses.length, 1).setValues(statuses);
   });
+  setupStudentParentContactColumns_();
 }
 
 function installStudentSyncTriggers() {
@@ -146,6 +149,19 @@ function syncStudentRow_(sheet, rowNumber) {
   }
   const directEmail = optionalText_(row['Email nhận thông tin']);
   const responseEmail = optionalText_(row['Email Address']);
+  const parentPhoneNumber = firstStudentValue_(row, [
+    'Số điện thoại phụ huynh',
+    'Số điện thoại người giám hộ',
+    'SĐT phụ huynh',
+    'Liên hệ phụ huynh - SĐT',
+    STUDENT_PARENT_PHONE_ENTITY_HEADER,
+  ]);
+  const parentEmail = firstStudentValue_(row, [
+    'Email phụ huynh',
+    'Email người giám hộ',
+    'Liên hệ phụ huynh - Email',
+    STUDENT_PARENT_EMAIL_ENTITY_HEADER,
+  ]);
   const externalStudentId = optionalText_(
     row[STUDENT_EXTERNAL_ID_HEADER] || row.student_id || row['Student ID'],
   ) || mvpEnsureExternalId_(sheet, rowNumber, STUDENT_EXTERNAL_ID_HEADER, 'HS');
@@ -163,6 +179,8 @@ function syncStudentRow_(sheet, rowNumber) {
       gender: normalizeGender_(row['Giới tính']),
       phoneNumber,
       email: directEmail || responseEmail || null,
+      parentPhoneNumber: parentPhoneNumber || null,
+      parentEmail: parentEmail || null,
       dateOfBirth: normalizeDate_(row['Ngày sinh']),
       status: normalizedStatus,
       schoolLevel,
@@ -185,6 +203,8 @@ function syncStudentRow_(sheet, rowNumber) {
       gender: payload.gender,
       phone_number: phoneNumber,
       email: payload.email,
+      parent_phone_number: payload.parentPhoneNumber,
+      parent_email: payload.parentEmail,
       date_of_birth: payload.dateOfBirth,
       grade_level: optionalText_(row['Lớp/Khối']),
       status: normalizedStatus.toLowerCase(),
@@ -238,6 +258,8 @@ function syncStudentManagementRow_(sheet, rowNumber) {
     gender: normalizeGender_(row.gender),
     phoneNumber,
     email: optionalText_(row.email) || null,
+    parentPhoneNumber: optionalText_(row[STUDENT_PARENT_PHONE_ENTITY_HEADER]) || null,
+    parentEmail: optionalText_(row[STUDENT_PARENT_EMAIL_ENTITY_HEADER]) || null,
     dateOfBirth: normalizeDate_(row.date_of_birth),
     status: normalizedStatus,
     schoolLevel,
@@ -250,6 +272,8 @@ function syncStudentManagementRow_(sheet, rowNumber) {
     gender: payload.gender,
     phone_number: phoneNumber,
     email: payload.email,
+    parent_phone_number: payload.parentPhoneNumber,
+    parent_email: payload.parentEmail,
     date_of_birth: payload.dateOfBirth,
     grade_level: Number.isFinite(gradeLevel) ? gradeLevel : '',
     status: normalizedStatus.toLowerCase(),
@@ -317,6 +341,32 @@ function normalizeStudentStatus_(value) {
     return 'INACTIVE';
   }
   return 'ACTIVE';
+}
+
+function setupStudentParentContactColumns_() {
+  const spreadsheet = SpreadsheetApp.getActive();
+  ['students', 'students_THCS', 'students_THPT'].forEach(function(sheetName) {
+    const sheet = spreadsheet.getSheetByName(sheetName);
+    if (!sheet) return;
+    [STUDENT_PARENT_PHONE_ENTITY_HEADER, STUDENT_PARENT_EMAIL_ENTITY_HEADER].forEach(function(header) {
+      const width = Math.max(sheet.getLastColumn(), 1);
+      const headers = sheet.getRange(1, 1, 1, width).getDisplayValues()[0]
+        .map(function(value) { return optionalText_(value); });
+      if (headers.indexOf(header) >= 0) return;
+      const targetColumn = width + 1;
+      sheet.getRange(1, width)
+        .copyTo(sheet.getRange(1, targetColumn), SpreadsheetApp.CopyPasteType.PASTE_FORMAT, false);
+      sheet.getRange(1, targetColumn).setValue(header);
+    });
+  });
+}
+
+function firstStudentValue_(row, headers) {
+  for (let index = 0; index < headers.length; index += 1) {
+    const value = optionalText_(row[headers[index]]);
+    if (value) return value;
+  }
+  return '';
 }
 
 function optionalText_(value) {

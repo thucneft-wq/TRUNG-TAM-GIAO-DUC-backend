@@ -9,6 +9,7 @@ const COUNSELOR_SYNC_HEADER_ = 'Trạng thái đồng bộ';
 const COUNSELOR_PENDING_LABEL_ = 'Chờ duyệt';
 const COUNSELOR_APPROVED_LABEL_ = 'Đã duyệt';
 const COUNSELOR_REJECTED_LABEL_ = 'Từ chối';
+const COUNSELOR_SNAPSHOT_SHEET_ = '__sync_counselors';
 
 function setupCounselorApprovalColumns() {
   const sheet = SpreadsheetApp.getActive().getSheetByName(COUNSELOR_FORM_SHEET_);
@@ -39,6 +40,7 @@ function setupCounselorApprovalColumns() {
   sheet.setColumnWidth(statusColumn, 170);
   if (idColumn > 0) sheet.hideColumns(idColumn);
   if (syncColumn > 0) sheet.hideColumns(syncColumn);
+  counselorRefreshDeletionSnapshot_();
 }
 
 function installCounselorSyncTriggers() {
@@ -89,6 +91,7 @@ function syncAllCounselors() {
       syncCounselorRow_(sheet, index + 2);
     }
   });
+  counselorRefreshDeletionSnapshot_();
 }
 
 function syncCounselorRow_(sheet, rowNumber) {
@@ -153,6 +156,7 @@ function syncCounselorRow_(sheet, rowNumber) {
       status: status.toLowerCase(),
       specialization: payload.specialization,
     });
+    counselorRefreshDeletionSnapshot_();
     if (status === 'INACTIVE') {
       mvpAppendArchive_({
         entityType: 'COUNSELOR',
@@ -269,6 +273,145 @@ function counselorPayload_(row, externalCounselorId, firstName, lastName, status
     specialization: specialization || null,
     status,
   };
+}
+
+function counselorHandleSheetRowDeletion_() {
+  const spreadsheet = SpreadsheetApp.getActive();
+  const snapshot = spreadsheet.getSheetByName(COUNSELOR_SNAPSHOT_SHEET_);
+  if (!snapshot || snapshot.getLastRow() <= 1) {
+    counselorRefreshDeletionSnapshot_();
+    return;
+  }
+
+  const snapshotHeaders = snapshot.getRange(1, 1, 1, snapshot.getLastColumn()).getDisplayValues()[0];
+  const snapshotRows = snapshot.getRange(2, 1, snapshot.getLastRow() - 1, snapshot.getLastColumn())
+    .getValues();
+  const previous = snapshotRows.map(function(values) {
+    return Object.fromEntries(snapshotHeaders.map(function(header, index) {
+      return [header, values[index]];
+    }));
+  });
+
+  const officialIds = counselorCurrentOfficialIds_();
+  const sourceIds = counselorCurrentSourceIds_();
+  previous.forEach(function(entry) {
+    const externalId = counselorText_(entry.external_counselor_id);
+    if (!externalId) return;
+    const removedFromOfficial = officialIds.indexOf(externalId.toUpperCase()) === -1;
+    const trackedInSource = String(entry.track_source || '').toLowerCase() === 'true';
+    const removedFromSource = trackedInSource && sourceIds.indexOf(externalId.toUpperCase()) === -1;
+    if (!removedFromOfficial && !removedFromSource) return;
+
+    const payload = {
+      externalCounselorId: externalId,
+      firstName: counselorText_(entry.first_name) || 'Tư vấn viên',
+      lastName: counselorText_(entry.last_name) || externalId,
+      gender: counselorText_(entry.gender) || null,
+      phoneNumber: counselorText_(entry.phone_number) || null,
+      email: counselorText_(entry.email) || null,
+      dateOfBirth: counselorDate_(entry.date_of_birth),
+      role: counselorText_(entry.role) || 'counselor',
+      specialization: counselorText_(entry.specialization) || null,
+      status: 'INACTIVE',
+    };
+    counselorPost_(payload);
+    counselorMarkSourceInactive_(externalId);
+    counselorUpdateExistingOfficialRow_(externalId, { status: 'inactive' });
+    mvpAppendArchive_({
+      entityType: 'COUNSELOR',
+      externalId,
+      displayName: `${payload.lastName} ${payload.firstName}`.trim(),
+      sourceSheet: removedFromOfficial ? 'counselors' : COUNSELOR_FORM_SHEET_,
+      previousStatus: 'ACTIVE',
+      reason: 'Xóa dòng trên Sheet - tự động ngừng hoạt động',
+    });
+  });
+  counselorRefreshDeletionSnapshot_();
+}
+
+function counselorRefreshDeletionSnapshot_() {
+  const spreadsheet = SpreadsheetApp.getActive();
+  const official = spreadsheet.getSheetByName('counselors');
+  if (!official) return;
+  let snapshot = spreadsheet.getSheetByName(COUNSELOR_SNAPSHOT_SHEET_);
+  if (!snapshot) snapshot = spreadsheet.insertSheet(COUNSELOR_SNAPSHOT_SHEET_);
+  const snapshotHeaders = [
+    'external_counselor_id', 'first_name', 'last_name', 'gender', 'phone_number',
+    'email', 'date_of_birth', 'role', 'specialization', 'status', 'track_source',
+  ];
+  const rows = [];
+  if (official.getLastRow() > 1) {
+    const headers = official.getRange(1, 1, 1, official.getLastColumn()).getDisplayValues()[0];
+    const values = official.getRange(2, 1, official.getLastRow() - 1, official.getLastColumn())
+      .getValues();
+    const sourceIds = counselorCurrentSourceIds_();
+    values.forEach(function(row) {
+      const record = Object.fromEntries(headers.map(function(header, index) {
+        return [header, row[index]];
+      }));
+      const externalId = counselorText_(record.counselor_id || record.external_counselor_id);
+      if (!externalId) return;
+      rows.push([
+        externalId,
+        record.first_name || '',
+        record.last_name || '',
+        record.gender || '',
+        record.phone_number || '',
+        record.email || '',
+        record.date_of_birth || '',
+        record.role || 'counselor',
+        record.specialization || '',
+        record.status || '',
+        sourceIds.indexOf(externalId.toUpperCase()) !== -1,
+      ]);
+    });
+  }
+  snapshot.clearContents();
+  snapshot.getRange(1, 1, 1, snapshotHeaders.length).setValues([snapshotHeaders]);
+  if (rows.length) snapshot.getRange(2, 1, rows.length, snapshotHeaders.length).setValues(rows);
+  if (!snapshot.isSheetHidden()) snapshot.hideSheet();
+}
+
+function counselorCurrentOfficialIds_() {
+  const sheet = SpreadsheetApp.getActive().getSheetByName('counselors');
+  if (!sheet || sheet.getLastRow() <= 1) return [];
+  const headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getDisplayValues()[0];
+  const idIndex = headers.indexOf('counselor_id');
+  if (idIndex < 0) return [];
+  return sheet.getRange(2, idIndex + 1, sheet.getLastRow() - 1, 1).getDisplayValues()
+    .map(function(values) { return counselorText_(values[0]).toUpperCase(); })
+    .filter(Boolean);
+}
+
+function counselorCurrentSourceIds_() {
+  const sheet = SpreadsheetApp.getActive().getSheetByName(COUNSELOR_FORM_SHEET_);
+  if (!sheet || sheet.getLastRow() <= 1) return [];
+  const headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getDisplayValues()[0];
+  const idIndex = headers.indexOf(COUNSELOR_ID_HEADER_);
+  if (idIndex < 0) return [];
+  return sheet.getRange(2, idIndex + 1, sheet.getLastRow() - 1, 1).getDisplayValues()
+    .map(function(values) { return counselorText_(values[0]).toUpperCase(); })
+    .filter(Boolean);
+}
+
+function counselorMarkSourceInactive_(externalId) {
+  const sheet = SpreadsheetApp.getActive().getSheetByName(COUNSELOR_FORM_SHEET_);
+  if (!sheet || sheet.getLastRow() <= 1) return;
+  const headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getDisplayValues()[0];
+  const idIndex = headers.indexOf(COUNSELOR_ID_HEADER_);
+  const statusIndex = headers.indexOf(COUNSELOR_STATUS_HEADER_);
+  const syncIndex = headers.indexOf(COUNSELOR_SYNC_HEADER_);
+  if (idIndex < 0 || statusIndex < 0) return;
+  const ids = sheet.getRange(2, idIndex + 1, sheet.getLastRow() - 1, 1).getDisplayValues();
+  ids.forEach(function(values, index) {
+    if (counselorText_(values[0]).toUpperCase() !== externalId.toUpperCase()) return;
+    const rowNumber = index + 2;
+    sheet.getRange(rowNumber, statusIndex + 1).setValue('Ngừng hoạt động');
+    if (syncIndex >= 0) {
+      sheet.getRange(rowNumber, syncIndex + 1)
+        .setValue(mvpSyncTimestamp_('Đã ngừng hoạt động do xóa dòng'));
+    }
+  });
 }
 
 function counselorPost_(payload) {

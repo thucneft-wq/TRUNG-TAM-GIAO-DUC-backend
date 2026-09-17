@@ -32,6 +32,12 @@ function installMvpSyncTriggers() {
   const obsoleteHandlers = [
     'handleMvpEdit',
     'handleMvpFormSubmit',
+    'handleMvpChange',
+    'handleUnifiedEdit',
+    'handleUnifiedFormSubmit',
+    'handleUnifiedChange',
+    'onEdit',
+    'onFormSubmit',
     'handleStudentEdit',
     'handleStudentFormSubmit',
     'handleCounselorEdit',
@@ -59,6 +65,15 @@ function installMvpSyncTriggers() {
     .forSpreadsheet(spreadsheet)
     .onFormSubmit()
     .create();
+  ScriptApp.newTrigger('handleMvpChange')
+    .forSpreadsheet(spreadsheet)
+    .onChange()
+    .create();
+}
+
+function handleMvpChange(event) {
+  if (!event || event.changeType !== 'REMOVE_ROW') return;
+  counselorHandleSheetRowDeletion_();
 }
 
 function handleMvpEdit(event) {

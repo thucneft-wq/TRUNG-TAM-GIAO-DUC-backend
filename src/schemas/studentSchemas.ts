@@ -17,6 +17,8 @@ export const createStudentSchema = z.object({
   gender: z.string().trim().max(20).nullable().optional(),
   phoneNumber: z.string().trim().min(1).max(20),
   email: z.email().max(225).nullable().optional(),
+  parentPhoneNumber: z.string().trim().min(1).max(20).nullable().optional(),
+  parentEmail: z.email().max(225).nullable().optional(),
   dateOfBirth: nullableDate,
   status: z.enum(studentStatuses).default('ACTIVE'),
   schoolLevel: z.enum(schoolLevels).nullable().optional(),
