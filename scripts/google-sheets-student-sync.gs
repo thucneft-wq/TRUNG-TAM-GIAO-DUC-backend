@@ -25,6 +25,8 @@ const STUDENT_STATUS_INACTIVE_LABEL = 'Ngừng theo dõi';
 const STUDENT_EXTERNAL_ID_HEADER = 'Mã học sinh';
 const STUDENT_ASSIGNED_COUNSELOR_HEADER = 'Tư vấn viên phụ trách';
 const STUDENT_SYNC_STATUS_HEADER = 'Trạng thái đồng bộ';
+const STUDENT_PARENT_PHONE_SOURCE_HEADER = 'Số điện thoại phụ huynh';
+const STUDENT_PARENT_EMAIL_SOURCE_HEADER = 'Email phụ huynh';
 const STUDENT_PARENT_PHONE_ENTITY_HEADER = 'parent_phone_number';
 const STUDENT_PARENT_EMAIL_ENTITY_HEADER = 'parent_email';
 
@@ -150,15 +152,24 @@ function syncStudentRow_(sheet, rowNumber) {
   const directEmail = optionalText_(row['Email nhận thông tin']);
   const responseEmail = optionalText_(row['Email Address']);
   const parentPhoneNumber = firstStudentValue_(row, [
-    'Số điện thoại phụ huynh',
+    STUDENT_PARENT_PHONE_SOURCE_HEADER,
     'Số điện thoại người giám hộ',
+    'Số điện thoại phụ huynh/người liên hệ khẩn cấp',
+    'Số điện thoại phụ huynh/người giám hộ',
+    'Số điện thoại của phụ huynh/người giám hộ',
+    'Số điện thoại liên hệ phụ huynh/người giám hộ',
     'SĐT phụ huynh',
+    'SĐT phụ huynh/người giám hộ',
     'Liên hệ phụ huynh - SĐT',
     STUDENT_PARENT_PHONE_ENTITY_HEADER,
   ]);
   const parentEmail = firstStudentValue_(row, [
-    'Email phụ huynh',
+    STUDENT_PARENT_EMAIL_SOURCE_HEADER,
     'Email người giám hộ',
+    'Email phụ huynh/người giám hộ',
+    'Email của phụ huynh/người giám hộ',
+    'Gmail phụ huynh',
+    'Gmail phụ huynh/người giám hộ',
     'Liên hệ phụ huynh - Email',
     STUDENT_PARENT_EMAIL_ENTITY_HEADER,
   ]);
@@ -345,20 +356,32 @@ function normalizeStudentStatus_(value) {
 
 function setupStudentParentContactColumns_() {
   const spreadsheet = SpreadsheetApp.getActive();
+  Object.keys(STUDENT_SHEETS).forEach(function(sheetName) {
+    const sheet = spreadsheet.getSheetByName(sheetName);
+    if (!sheet) return;
+    [STUDENT_PARENT_PHONE_SOURCE_HEADER, STUDENT_PARENT_EMAIL_SOURCE_HEADER].forEach(function(header) {
+      ensureStudentColumn_(sheet, header);
+    });
+  });
+
   ['students', 'students_THCS', 'students_THPT'].forEach(function(sheetName) {
     const sheet = spreadsheet.getSheetByName(sheetName);
     if (!sheet) return;
     [STUDENT_PARENT_PHONE_ENTITY_HEADER, STUDENT_PARENT_EMAIL_ENTITY_HEADER].forEach(function(header) {
-      const width = Math.max(sheet.getLastColumn(), 1);
-      const headers = sheet.getRange(1, 1, 1, width).getDisplayValues()[0]
-        .map(function(value) { return optionalText_(value); });
-      if (headers.indexOf(header) >= 0) return;
-      const targetColumn = width + 1;
-      sheet.getRange(1, width)
-        .copyTo(sheet.getRange(1, targetColumn), SpreadsheetApp.CopyPasteType.PASTE_FORMAT, false);
-      sheet.getRange(1, targetColumn).setValue(header);
+      ensureStudentColumn_(sheet, header);
     });
   });
+}
+
+function ensureStudentColumn_(sheet, header) {
+  const width = Math.max(sheet.getLastColumn(), 1);
+  const headers = sheet.getRange(1, 1, 1, width).getDisplayValues()[0]
+    .map(function(value) { return optionalText_(value); });
+  if (headers.indexOf(header) >= 0) return;
+  const targetColumn = width + 1;
+  sheet.getRange(1, width)
+    .copyTo(sheet.getRange(1, targetColumn), SpreadsheetApp.CopyPasteType.PASTE_FORMAT, false);
+  sheet.getRange(1, targetColumn).setValue(header);
 }
 
 function firstStudentValue_(row, headers) {
