@@ -27,12 +27,14 @@ export const createStudentSchema = z.object({
 }).strict();
 
 /**
- * Schema for student data arriving from Google Sheets / bot form.
- * Defaults to PENDING_REVIEW so that new registrations always need Admin approval
- * before a counselor is automatically assigned.
+ * Student registrations are accepted immediately. Historical integrations may
+ * still send PENDING_REVIEW, so normalize that legacy value to ACTIVE instead of
+ * leaving an accepted registration stuck outside the assignment queue.
  */
 export const googleSheetsStudentSchema = createStudentSchema.extend({
-  status: z.enum(['PENDING_REVIEW', 'ACTIVE', 'INACTIVE']).default('PENDING_REVIEW'),
+  status: z.enum(studentStatuses)
+    .default('ACTIVE')
+    .transform((status) => status === 'PENDING_REVIEW' ? 'ACTIVE' : status),
 });
 
 export const updateStudentSchema = createStudentSchema

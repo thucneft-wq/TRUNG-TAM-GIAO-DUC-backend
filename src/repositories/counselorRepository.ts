@@ -349,9 +349,12 @@ export class PgCounselorRepository implements CounselorRepositoryPort {
       SELECT counselor_id
       FROM Counselors
       WHERE ($1::UUID IS NOT NULL AND counselor_id = $1::UUID)
-         OR ($2::VARCHAR IS NOT NULL AND UPPER(external_counselor_id) = UPPER($2::VARCHAR))
-         OR ($3::VARCHAR IS NOT NULL AND LOWER(email) = LOWER($3::VARCHAR))
-         OR ($4::VARCHAR IS NOT NULL AND phone_number = $4::VARCHAR)
+         OR ($1::UUID IS NULL AND $2::VARCHAR IS NOT NULL
+           AND UPPER(external_counselor_id) = UPPER($2::VARCHAR))
+         OR ($1::UUID IS NULL AND $2::VARCHAR IS NULL AND $3::VARCHAR IS NOT NULL
+           AND LOWER(email) = LOWER($3::VARCHAR))
+         OR ($1::UUID IS NULL AND $2::VARCHAR IS NULL AND $3::VARCHAR IS NULL
+           AND phone_number = $4::VARCHAR)
       ORDER BY CASE
         WHEN counselor_id = $1::UUID THEN 0
         WHEN UPPER(external_counselor_id) = UPPER($2::VARCHAR) THEN 1

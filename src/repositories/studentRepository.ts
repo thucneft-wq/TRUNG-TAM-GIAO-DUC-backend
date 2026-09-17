@@ -95,20 +95,12 @@ const accessCondition = `
 )
 `;
 
-/**
- * Admins see both PENDING_REVIEW (new from bot/form) and ACTIVE students.
- * Counselors only see ACTIVE students assigned to them.
- * PENDING_REVIEW rows sort first so the review queue is always visible at the top.
- */
+/** Active students remain visible to Admin even while waiting for assignment. */
 const LIST_STUDENTS_SQL = `
 ${STUDENT_SELECT}
-WHERE (
-  ($1::TEXT = 'admin' AND UPPER(s.status) IN ('ACTIVE', 'PENDING_REVIEW'))
-  OR (UPPER(s.status) = 'ACTIVE' AND ${accessCondition})
-)
-ORDER BY
-  CASE UPPER(s.status) WHEN 'PENDING_REVIEW' THEN 0 ELSE 1 END,
-  s.last_name, s.first_name
+WHERE UPPER(s.status) = 'ACTIVE'
+  AND ${accessCondition}
+ORDER BY s.last_name, s.first_name
 `;
 
 const GET_STUDENT_SQL = `
@@ -192,9 +184,11 @@ export class PgStudentRepository implements StudentRepositoryPort {
   ): Promise<StudentRow | null> {
     const result = await this.pool.query(`
       ${STUDENT_SELECT}
-      WHERE ($1::VARCHAR IS NOT NULL AND UPPER(s.external_student_id) = UPPER($1::VARCHAR))
-         OR ($2::VARCHAR IS NOT NULL AND LOWER(s.email) = LOWER($2::VARCHAR))
-         OR s.phone_number = $3::VARCHAR
+      WHERE (
+        ($1::VARCHAR IS NOT NULL AND UPPER(s.external_student_id) = UPPER($1::VARCHAR))
+        OR ($1::VARCHAR IS NULL AND $2::VARCHAR IS NOT NULL AND LOWER(s.email) = LOWER($2::VARCHAR))
+        OR ($1::VARCHAR IS NULL AND $2::VARCHAR IS NULL AND s.phone_number = $3::VARCHAR)
+      )
       ORDER BY CASE
         WHEN UPPER(s.external_student_id) = UPPER($1::VARCHAR) THEN 0
         ELSE 1
@@ -343,10 +337,13 @@ export class PgStudentRepository implements StudentRepositoryPort {
       const student = await client.query<{ student_id: string }>(`
         SELECT student_id
         FROM Students
-        WHERE ($1::UUID IS NOT NULL AND student_id = $1::UUID)
-           OR ($2::VARCHAR IS NOT NULL AND UPPER(external_student_id) = UPPER($2::VARCHAR))
-           OR ($3::VARCHAR IS NOT NULL AND LOWER(email) = LOWER($3::VARCHAR))
-           OR ($4::VARCHAR IS NOT NULL AND phone_number = $4::VARCHAR)
+        WHERE (
+          ($1::UUID IS NOT NULL AND student_id = $1::UUID)
+          OR ($1::UUID IS NULL AND $2::VARCHAR IS NOT NULL AND UPPER(external_student_id) = UPPER($2::VARCHAR))
+          OR ($1::UUID IS NULL AND $2::VARCHAR IS NULL AND $3::VARCHAR IS NOT NULL AND LOWER(email) = LOWER($3::VARCHAR))
+          OR ($1::UUID IS NULL AND $2::VARCHAR IS NULL AND $3::VARCHAR IS NULL AND phone_number = $4::VARCHAR)
+        )
+          AND ($5::VARCHAR <> 'ACTIVE' OR UPPER(status) = 'ACTIVE')
         ORDER BY CASE
           WHEN student_id = $1::UUID THEN 0
           WHEN UPPER(external_student_id) = UPPER($2::VARCHAR) THEN 1
@@ -358,6 +355,7 @@ export class PgStudentRepository implements StudentRepositoryPort {
         input.externalStudentId ?? null,
         input.studentEmail ?? null,
         input.studentPhoneNumber ?? null,
+        input.status,
       ]);
       if (!student.rows[0]) {
         throw new AppError(404, 'Student from assignment sheet was not found.', 'ASSIGNMENT_STUDENT_NOT_FOUND');
@@ -366,10 +364,15 @@ export class PgStudentRepository implements StudentRepositoryPort {
       const counselor = await client.query<{ counselor_id: string }>(`
         SELECT counselor_id
         FROM Counselors
-        WHERE ($1::UUID IS NOT NULL AND counselor_id = $1::UUID)
-           OR ($2::VARCHAR IS NOT NULL AND UPPER(external_counselor_id) = UPPER($2::VARCHAR))
-           OR ($3::VARCHAR IS NOT NULL AND LOWER(email) = LOWER($3::VARCHAR))
-           OR ($4::VARCHAR IS NOT NULL AND phone_number = $4::VARCHAR)
+        WHERE (
+          ($1::UUID IS NOT NULL AND counselor_id = $1::UUID)
+          OR ($1::UUID IS NULL AND $2::VARCHAR IS NOT NULL AND UPPER(external_counselor_id) = UPPER($2::VARCHAR))
+          OR ($1::UUID IS NULL AND $2::VARCHAR IS NULL AND $3::VARCHAR IS NOT NULL AND LOWER(email) = LOWER($3::VARCHAR))
+          OR ($1::UUID IS NULL AND $2::VARCHAR IS NULL AND $3::VARCHAR IS NULL AND phone_number = $4::VARCHAR)
+        )
+          AND ($5::VARCHAR <> 'ACTIVE' OR (
+            UPPER(status) = 'ACTIVE' AND external_counselor_id IS NOT NULL
+          ))
         ORDER BY CASE
           WHEN counselor_id = $1::UUID THEN 0
           WHEN UPPER(external_counselor_id) = UPPER($2::VARCHAR) THEN 1
@@ -381,9 +384,14 @@ export class PgStudentRepository implements StudentRepositoryPort {
         input.externalCounselorId ?? null,
         input.counselorEmail ?? null,
         input.counselorPhoneNumber ?? null,
+        input.status,
       ]);
       if (!counselor.rows[0]) {
-        throw new AppError(404, 'Counselor from assignment sheet was not found.', 'ASSIGNMENT_COUNSELOR_NOT_FOUND');
+        throw new AppError(
+          409,
+          'Counselor was not found or is not approved and active.',
+          'ASSIGNMENT_COUNSELOR_NOT_ELIGIBLE',
+        );
       }
 
       const studentId = student.rows[0].student_id;
@@ -671,6 +679,22 @@ export class PgStudentRepository implements StudentRepositoryPort {
     studentId: string,
     counselorId: string,
   ): Promise<void> {
+    const eligible = await client.query(`
+      SELECT 1
+      FROM Students s
+      JOIN Counselors c ON c.counselor_id = $2::UUID
+      WHERE s.student_id = $1::UUID
+        AND UPPER(s.status) = 'ACTIVE'
+        AND UPPER(c.status) = 'ACTIVE'
+        AND c.external_counselor_id IS NOT NULL
+    `, [studentId, counselorId]);
+    if ((eligible.rowCount ?? 0) === 0) {
+      throw new AppError(
+        409,
+        'Only an active student can be assigned to an approved active counselor.',
+        'ASSIGNMENT_NOT_ELIGIBLE',
+      );
+    }
     const assignment = await client.query<{ assignment_id: string }>(`
       INSERT INTO Counselor_Assignments (student_id, status)
       VALUES ($1::UUID, 'ACTIVE')

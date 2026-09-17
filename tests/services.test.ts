@@ -35,6 +35,7 @@ import {
 } from '../src/utils/kpiPolicy.js';
 import { safePercentage } from '../src/utils/period.js';
 import { AppError } from '../src/utils/appError.js';
+import { googleSheetsStudentSchema } from '../src/schemas/studentSchemas.js';
 
 const createKpis = (failedId?: string, nullId?: string): KpiItem[] =>
   KPI_DEFINITIONS.map((definition) => {
@@ -314,6 +315,19 @@ test('Google Sheets inactive status soft-deletes an existing student', async () 
   assert.equal(result.student.status, 'INACTIVE');
   assert.equal(deactivatedId, studentRow.student_id);
   assert.equal(updateCalled, false);
+});
+
+test('Google Sheets student registrations default and legacy pending rows to active', () => {
+  const base = {
+    firstName: 'New',
+    lastName: 'Student',
+    phoneNumber: '0900000000',
+  };
+  assert.equal(googleSheetsStudentSchema.parse(base).status, 'ACTIVE');
+  assert.equal(googleSheetsStudentSchema.parse({
+    ...base,
+    status: 'PENDING_REVIEW',
+  }).status, 'ACTIVE');
 });
 
 const analyticsRow: CounselorAnalyticsRow = {
