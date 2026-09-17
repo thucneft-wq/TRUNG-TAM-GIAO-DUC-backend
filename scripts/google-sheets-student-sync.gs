@@ -13,6 +13,10 @@ const STUDENT_SHEETS = Object.freeze({
   'Đăng ký tư vấn tâm lý học đường – Dành cho học sinh THCS': 'THCS',
   'Đăng ký tư vấn tâm lý học đường – Dành cho học sinh THPT': 'THPT',
 });
+const STUDENT_MANAGEMENT_SHEETS = Object.freeze({
+  students_THCS: 'THCS',
+  students_THPT: 'THPT',
+});
 
 const STUDENT_STATUS_HEADER = 'Trạng thái';
 const STUDENT_STATUS_ACTIVE_LABEL = 'Đang hoạt động';
@@ -107,10 +111,15 @@ function handleStudentFormSubmit(event) {
 function handleStudentEdit(event) {
   if (!event || !event.range || event.range.getRow() <= 1) return;
   const sheet = event.range.getSheet();
-  if (!STUDENT_SHEETS[sheet.getName()]) return;
   const firstRow = event.range.getRow();
   const lastRow = firstRow + event.range.getNumRows() - 1;
-  for (let row = firstRow; row <= lastRow; row += 1) syncStudentRow_(sheet, row);
+  if (STUDENT_SHEETS[sheet.getName()]) {
+    for (let row = firstRow; row <= lastRow; row += 1) syncStudentRow_(sheet, row);
+    return;
+  }
+  if (STUDENT_MANAGEMENT_SHEETS[sheet.getName()]) {
+    for (let row = firstRow; row <= lastRow; row += 1) syncStudentManagementRow_(sheet, row);
+  }
 }
 
 function syncAllStudents() {
@@ -125,6 +134,7 @@ function syncAllStudents() {
       else skippedCount += 1;
     }
   });
+  mvpRefreshStudentLevelSheets_();
   console.log(`Đồng bộ hoàn tất: ${syncedCount} dòng, bỏ qua ${skippedCount} dòng trống/chưa đủ dữ liệu.`);
 }
 
@@ -181,7 +191,7 @@ function syncStudentRow_(sheet, rowNumber) {
       counselorExternalId || 'Chưa phân công',
     );
     mvpSetCellByHeader_(sheet, rowNumber, STUDENT_SYNC_STATUS_HEADER, mvpSyncTimestamp_('Đã đồng bộ'));
-    mvpUpsertEntityRow_('students', 'student_id', externalStudentId, {
+    const entityValues = {
       first_name: firstName,
       last_name: lastName,
       gender: payload.gender,
@@ -191,7 +201,9 @@ function syncStudentRow_(sheet, rowNumber) {
       grade_level: optionalText_(row['Lớp/Khối']),
       status: normalizedStatus.toLowerCase(),
       school_name: payload.schoolName,
-    });
+    };
+    mvpUpsertEntityRow_('students', 'student_id', externalStudentId, entityValues);
+    mvpUpsertStudentLevelRow_(schoolLevel, externalStudentId, entityValues);
     if (counselorExternalId) {
       mvpUpsertAssignment_(externalStudentId, counselorExternalId, normalizedStatus);
     }
@@ -212,6 +224,56 @@ function syncStudentRow_(sheet, rowNumber) {
     mvpSetCellByHeader_(sheet, rowNumber, STUDENT_SYNC_STATUS_HEADER, `Lỗi: ${error.message}`);
     throw error;
   }
+}
+
+function syncStudentManagementRow_(sheet, rowNumber) {
+  const schoolLevel = STUDENT_MANAGEMENT_SHEETS[sheet.getName()];
+  if (!schoolLevel) return false;
+  const headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getDisplayValues()[0];
+  const values = sheet.getRange(rowNumber, 1, 1, sheet.getLastColumn()).getValues()[0];
+  const row = Object.fromEntries(headers.map(function(header, index) {
+    return [String(header || '').trim(), values[index]];
+  }));
+  const externalStudentId = optionalText_(row.student_id);
+  const firstName = optionalText_(row.first_name);
+  const lastName = optionalText_(row.last_name);
+  const phoneNumber = optionalText_(row.phone_number);
+  if (!externalStudentId || !firstName || !lastName || !phoneNumber) return false;
+
+  const normalizedStatus = normalizeStudentStatus_(row.status);
+  const gradeText = optionalText_(row.grade_level);
+  const gradeLevel = gradeText ? Number(gradeText) : NaN;
+  const payload = {
+    externalStudentId,
+    firstName,
+    lastName,
+    gender: normalizeGender_(row.gender),
+    phoneNumber,
+    email: optionalText_(row.email) || null,
+    dateOfBirth: normalizeDate_(row.date_of_birth),
+    status: normalizedStatus,
+    schoolLevel,
+    schoolName: optionalText_(row.school_name) || null,
+  };
+  postStudent_(payload);
+  const entityValues = {
+    first_name: firstName,
+    last_name: lastName,
+    gender: payload.gender,
+    phone_number: phoneNumber,
+    email: payload.email,
+    date_of_birth: payload.dateOfBirth,
+    grade_level: Number.isFinite(gradeLevel) ? gradeLevel : '',
+    status: normalizedStatus.toLowerCase(),
+    school_id: optionalText_(row.school_id),
+    school_name: payload.schoolName,
+    address_id: optionalText_(row.address_id),
+  };
+  mvpUpsertEntityRow_('students', 'student_id', externalStudentId, entityValues);
+  mvpUpsertEntityRow_(sheet.getName(), 'student_id', externalStudentId, Object.assign({}, entityValues, {
+    status: mvpStudentStatusLabel_(normalizedStatus),
+  }));
+  return true;
 }
 
 function postStudent_(payload) {

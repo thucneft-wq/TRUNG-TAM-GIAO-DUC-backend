@@ -5,10 +5,17 @@
 
 const MVP_ARCHIVE_SHEET_ = 'Lưu trữ';
 const MVP_ASSIGNMENT_SHEET_ = 'counselor_assignments';
+const MVP_STUDENT_SOURCE_SHEET_ = 'students';
+const MVP_STUDENT_LEVEL_SHEETS_ = Object.freeze({
+  THCS: 'students_THCS',
+  THPT: 'students_THPT',
+});
 
 function installMvpWorkflow() {
   mvpEnsureArchiveSheet_();
+  mvpEnsureStudentLevelSheets_();
   setupStudentStatusColumns();
+  setupCounselorApprovalColumns();
   installStudentSyncTriggers();
   installCounselorSyncTriggers();
   installAssignmentSyncTriggers();
@@ -22,6 +29,105 @@ function syncAllMvpData() {
   syncAllAssignments();
   syncAllFeedback();
   console.log('Đã đồng bộ toàn bộ dữ liệu MVP.');
+}
+
+function setupStudentManagementSheets() {
+  mvpEnsureStudentLevelSheets_();
+  mvpRefreshStudentLevelSheets_();
+  console.log('Đã tạo và đồng bộ hai tab students_THCS, students_THPT.');
+}
+
+function mvpEnsureStudentLevelSheets_() {
+  const spreadsheet = SpreadsheetApp.getActive();
+  const source = spreadsheet.getSheetByName(MVP_STUDENT_SOURCE_SHEET_);
+  if (!source) throw new Error(`Không tìm thấy tab ${MVP_STUDENT_SOURCE_SHEET_}.`);
+  const headers = source.getRange(1, 1, 1, source.getLastColumn()).getDisplayValues()[0];
+
+  Object.keys(MVP_STUDENT_LEVEL_SHEETS_).forEach(function(level) {
+    const name = MVP_STUDENT_LEVEL_SHEETS_[level];
+    let sheet = spreadsheet.getSheetByName(name);
+    if (!sheet) sheet = spreadsheet.insertSheet(name);
+    if (sheet.getMaxColumns() < headers.length) {
+      sheet.insertColumnsAfter(sheet.getMaxColumns(), headers.length - sheet.getMaxColumns());
+    }
+    sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
+    source.getRange(1, 1, 1, headers.length).copyTo(
+      sheet.getRange(1, 1, 1, headers.length),
+      SpreadsheetApp.CopyPasteType.PASTE_FORMAT,
+      false,
+    );
+    sheet.setFrozenRows(1);
+
+    const statusIndex = headers.indexOf('status');
+    if (statusIndex >= 0) {
+      const validation = SpreadsheetApp.newDataValidation()
+        .requireValueInList([
+          STUDENT_STATUS_ACTIVE_LABEL,
+          STUDENT_STATUS_COMPLETED_LABEL,
+          STUDENT_STATUS_INACTIVE_LABEL,
+        ], true)
+        .setAllowInvalid(false)
+        .build();
+      sheet.getRange(2, statusIndex + 1, Math.max(sheet.getMaxRows() - 1, 1), 1)
+        .setDataValidation(validation);
+    }
+  });
+}
+
+function mvpRefreshStudentLevelSheets_() {
+  mvpEnsureStudentLevelSheets_();
+  const spreadsheet = SpreadsheetApp.getActive();
+  const source = spreadsheet.getSheetByName(MVP_STUDENT_SOURCE_SHEET_);
+  const headers = source.getRange(1, 1, 1, source.getLastColumn()).getDisplayValues()[0];
+  if (source.getLastRow() <= 1) return;
+
+  const rows = source.getRange(2, 1, source.getLastRow() - 1, headers.length).getValues();
+  rows.forEach(function(row) {
+    const externalId = String(row[headers.indexOf('student_id')] || '').trim();
+    if (!externalId) return;
+    const level = mvpStudentLevelFromEntityRow_(headers, row);
+    if (!level) return;
+    const valuesByHeader = {};
+    headers.forEach(function(header, index) {
+      valuesByHeader[header] = row[index];
+    });
+    valuesByHeader.status = mvpStudentStatusLabel_(valuesByHeader.status);
+    mvpUpsertEntityRow_(MVP_STUDENT_LEVEL_SHEETS_[level], 'student_id', externalId, valuesByHeader);
+  });
+}
+
+function mvpUpsertStudentLevelRow_(schoolLevel, externalId, valuesByHeader) {
+  const normalizedLevel = String(schoolLevel || '').trim().toUpperCase();
+  const sheetName = MVP_STUDENT_LEVEL_SHEETS_[normalizedLevel];
+  if (!sheetName) return;
+  mvpEnsureStudentLevelSheets_();
+  const managementValues = Object.assign({}, valuesByHeader, {
+    status: mvpStudentStatusLabel_(valuesByHeader.status),
+  });
+  mvpUpsertEntityRow_(sheetName, 'student_id', externalId, managementValues);
+}
+
+function mvpStudentStatusLabel_(value) {
+  const normalized = String(value || '').trim().toLocaleLowerCase('vi-VN');
+  if (normalized === 'completed' || normalized === STUDENT_STATUS_COMPLETED_LABEL.toLocaleLowerCase('vi-VN')) {
+    return STUDENT_STATUS_COMPLETED_LABEL;
+  }
+  if (normalized === 'inactive' || normalized === STUDENT_STATUS_INACTIVE_LABEL.toLocaleLowerCase('vi-VN')) {
+    return STUDENT_STATUS_INACTIVE_LABEL;
+  }
+  return STUDENT_STATUS_ACTIVE_LABEL;
+}
+
+function mvpStudentLevelFromEntityRow_(headers, row) {
+  const gradeIndex = headers.indexOf('grade_level');
+  const gradeText = gradeIndex >= 0 ? String(row[gradeIndex] || '').trim() : '';
+  const grade = gradeText ? Number(gradeText) : NaN;
+  if (Number.isFinite(grade)) return grade <= 9 ? 'THCS' : 'THPT';
+  const schoolIndex = headers.indexOf('school_name');
+  const schoolName = schoolIndex >= 0 ? String(row[schoolIndex] || '').toUpperCase() : '';
+  if (schoolName.indexOf('THCS') >= 0) return 'THCS';
+  if (schoolName.indexOf('THPT') >= 0) return 'THPT';
+  return '';
 }
 
 function mvpEnsureArchiveSheet_() {
