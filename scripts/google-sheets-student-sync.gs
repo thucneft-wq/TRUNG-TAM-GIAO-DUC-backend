@@ -713,38 +713,11 @@ function studentHandleSheetRowDeletion_() {
  * both official management tabs are soft-deactivated in the database.
  */
 function reconcileActiveStudentsFromManagementSheets() {
-  const spreadsheet = SpreadsheetApp.getActive();
-  const entitySheet = spreadsheet.getSheetByName('students');
-  if (!entitySheet || entitySheet.getLastRow() <= 1) {
-    studentRefreshDeletionSnapshot_();
-    return;
-  }
-  const officialIds = [];
-  Object.keys(STUDENT_MANAGEMENT_SHEETS).forEach(function(sheetName) {
-    studentCurrentIdsForSheet_(sheetName).forEach(function(id) {
-      if (officialIds.indexOf(id) === -1) officialIds.push(id);
-    });
-  });
-  const headers = entitySheet.getRange(1, 1, 1, entitySheet.getLastColumn()).getDisplayValues()[0];
-  const rows = entitySheet.getRange(2, 1, entitySheet.getLastRow() - 1, entitySheet.getLastColumn()).getValues();
-  let deactivated = 0;
-  rows.forEach(function(values) {
-    const entry = Object.fromEntries(headers.map(function(header, index) { return [header, values[index]]; }));
-    const externalId = optionalText_(entry.student_id || entry.external_student_id);
-    if (!externalId || officialIds.indexOf(externalId.toUpperCase()) !== -1) return;
-    entry.external_student_id = externalId;
-    entry.source_sheet = 'students';
-    if (studentDeactivateSnapshotEntry_(
-      entry,
-      'students',
-      'Không còn trong Sheet quản lý - tự động ngừng hoạt động',
-      true,
-    )) deactivated += 1;
-  });
+  const officialIds = studentAllCurrentIds_();
   const result = postStudentReconcile_(officialIds);
   studentRefreshDeletionSnapshot_();
   console.log(
-    `Đã chuyển ${deactivated + Number(result.deactivatedStudents || 0)} học sinh không còn trên Sheet sang INACTIVE.`,
+    `Đã chuyển ${Number(result.deactivatedStudents || 0)} học sinh không còn trên Sheet sang INACTIVE.`,
   );
 }
 
