@@ -498,8 +498,24 @@ function syncPrimaryParentSheetRecord_(externalStudentId, studentName, phoneNumb
   } else {
     setStudentCellIfPresent_(linkSheet, linkRow, 'is_primary', true);
   }
+  propagateParentContactToStudentSheets_(parentId, phoneNumber, email);
   refreshParentStudentLabels_();
   return parentId;
+}
+
+function propagateParentContactToStudentSheets_(parentId, phoneNumber, email) {
+  const spreadsheet = SpreadsheetApp.getActive();
+  linkedStudentIdsForParent_(parentId).forEach(function(studentId) {
+    ['students', 'students_THCS', 'students_THPT'].forEach(function(sheetName) {
+      const sheet = spreadsheet.getSheetByName(sheetName);
+      if (!sheet) return;
+      const rowNumber = findStudentRowByExternalId_(sheet, studentId);
+      if (!rowNumber) return;
+      setStudentCellIfPresent_(sheet, rowNumber, STUDENT_PARENT_ID_ENTITY_HEADER, parentId);
+      setStudentCellIfPresent_(sheet, rowNumber, STUDENT_PARENT_PHONE_ENTITY_HEADER, phoneNumber);
+      setStudentCellIfPresent_(sheet, rowNumber, STUDENT_PARENT_EMAIL_ENTITY_HEADER, email);
+    });
+  });
 }
 
 function parentIdLinkedToStudent_(studentId) {
