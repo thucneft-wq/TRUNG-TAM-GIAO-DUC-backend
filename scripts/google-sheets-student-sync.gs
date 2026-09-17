@@ -88,19 +88,7 @@ function setupStudentStatusColumns() {
 }
 
 function installStudentSyncTriggers() {
-  const spreadsheet = SpreadsheetApp.getActive();
-  ScriptApp.getProjectTriggers()
-    .filter((trigger) => ['handleStudentFormSubmit', 'handleStudentEdit'].includes(trigger.getHandlerFunction()))
-    .forEach((trigger) => ScriptApp.deleteTrigger(trigger));
-
-  ScriptApp.newTrigger('handleStudentFormSubmit')
-    .forSpreadsheet(spreadsheet)
-    .onFormSubmit()
-    .create();
-  ScriptApp.newTrigger('handleStudentEdit')
-    .forSpreadsheet(spreadsheet)
-    .onEdit()
-    .create();
+  installMvpSyncTriggers();
 }
 
 function handleStudentFormSubmit(event) {

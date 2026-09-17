@@ -16,11 +16,70 @@ function installMvpWorkflow() {
   mvpEnsureStudentLevelSheets_();
   setupStudentStatusColumns();
   setupCounselorApprovalColumns();
-  installStudentSyncTriggers();
-  installCounselorSyncTriggers();
-  installAssignmentSyncTriggers();
-  installFeedbackSyncTriggers();
-  console.log('Đã cài trigger Student, Counselor, Assignment và Feedback.');
+  installMvpSyncTriggers();
+  console.log('Đã cài một bộ trigger chung cho Student, Counselor, Assignment và Feedback.');
+}
+
+/**
+ * Installs exactly one edit trigger and one form-submit trigger for the entire
+ * workbook. Separate installable triggers all fire for every edit, even when
+ * their handlers immediately ignore the edited tab. On a busy Sheet that
+ * creates concurrent executions which contend for Spreadsheet service access
+ * and can time out before the intended counselor approval is synchronized.
+ */
+function installMvpSyncTriggers() {
+  const spreadsheet = SpreadsheetApp.getActive();
+  const obsoleteHandlers = [
+    'handleMvpEdit',
+    'handleMvpFormSubmit',
+    'handleStudentEdit',
+    'handleStudentFormSubmit',
+    'handleCounselorEdit',
+    'handleCounselorFormSubmit',
+    'handleAssignmentEdit',
+    'handleFeedbackEdit',
+    'handleFeedbackFormSubmit',
+    'backendOnEdit',
+    'backendOnFormSubmit',
+  ];
+
+  ScriptApp.getProjectTriggers()
+    .filter(function(trigger) {
+      return obsoleteHandlers.indexOf(trigger.getHandlerFunction()) !== -1;
+    })
+    .forEach(function(trigger) {
+      ScriptApp.deleteTrigger(trigger);
+    });
+
+  ScriptApp.newTrigger('handleMvpEdit')
+    .forSpreadsheet(spreadsheet)
+    .onEdit()
+    .create();
+  ScriptApp.newTrigger('handleMvpFormSubmit')
+    .forSpreadsheet(spreadsheet)
+    .onFormSubmit()
+    .create();
+}
+
+function handleMvpEdit(event) {
+  if (!event || !event.range || event.range.getRow() <= 1) return;
+  const sheetName = event.range.getSheet().getName();
+
+  if (sheetName === COUNSELOR_FORM_SHEET_) return handleCounselorEdit(event);
+  if (STUDENT_SHEETS[sheetName] || STUDENT_MANAGEMENT_SHEETS[sheetName]) {
+    return handleStudentEdit(event);
+  }
+  if (FEEDBACK_SYNC_SHEETS_.indexOf(sheetName) !== -1) return handleFeedbackEdit(event);
+  if (isAssignmentSheet_(sheetName)) return handleAssignmentEdit(event);
+}
+
+function handleMvpFormSubmit(event) {
+  if (!event || !event.range) throw new Error('Thiếu dữ liệu sự kiện gửi Google Form.');
+  const sheetName = event.range.getSheet().getName();
+
+  if (sheetName === COUNSELOR_FORM_SHEET_) return handleCounselorFormSubmit(event);
+  if (STUDENT_SHEETS[sheetName]) return handleStudentFormSubmit(event);
+  if (FEEDBACK_SYNC_SHEETS_.indexOf(sheetName) !== -1) return handleFeedbackFormSubmit(event);
 }
 
 function syncAllMvpData() {

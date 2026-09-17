@@ -42,17 +42,7 @@ function setupCounselorApprovalColumns() {
 }
 
 function installCounselorSyncTriggers() {
-  const spreadsheet = SpreadsheetApp.getActive();
-  const handlers = ['handleCounselorFormSubmit', 'handleCounselorEdit'];
-  ScriptApp.getProjectTriggers()
-    .filter(function(trigger) {
-      return handlers.indexOf(trigger.getHandlerFunction()) !== -1;
-    })
-    .forEach(function(trigger) {
-      ScriptApp.deleteTrigger(trigger);
-    });
-  ScriptApp.newTrigger('handleCounselorFormSubmit').forSpreadsheet(spreadsheet).onFormSubmit().create();
-  ScriptApp.newTrigger('handleCounselorEdit').forSpreadsheet(spreadsheet).onEdit().create();
+  installMvpSyncTriggers();
 }
 
 function handleCounselorFormSubmit(event) {

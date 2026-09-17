@@ -17,15 +17,7 @@ const ASSIGNMENT_SYNC_SHEET_NAMES_ = Object.freeze([
 ]);
 
 function installAssignmentSyncTriggers() {
-  const spreadsheet = SpreadsheetApp.getActive();
-  ScriptApp.getProjectTriggers()
-    .filter((trigger) => trigger.getHandlerFunction() === 'handleAssignmentEdit')
-    .forEach((trigger) => ScriptApp.deleteTrigger(trigger));
-
-  ScriptApp.newTrigger('handleAssignmentEdit')
-    .forSpreadsheet(spreadsheet)
-    .onEdit()
-    .create();
+  installMvpSyncTriggers();
 }
 
 function handleAssignmentEdit(event) {

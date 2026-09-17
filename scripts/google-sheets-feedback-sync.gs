@@ -17,24 +17,7 @@ const FEEDBACK_SYNC_SHEETS_ = Object.freeze([
 const FEEDBACK_SYNC_STATUS_HEADER_ = 'Trạng thái đồng bộ';
 
 function installFeedbackSyncTriggers() {
-  const spreadsheet = SpreadsheetApp.getActive();
-  const handlers = ['handleFeedbackFormSubmit', 'handleFeedbackEdit'];
-  ScriptApp.getProjectTriggers()
-    .filter(function(trigger) {
-      return handlers.indexOf(trigger.getHandlerFunction()) !== -1;
-    })
-    .forEach(function(trigger) {
-      ScriptApp.deleteTrigger(trigger);
-    });
-
-  ScriptApp.newTrigger('handleFeedbackFormSubmit')
-    .forSpreadsheet(spreadsheet)
-    .onFormSubmit()
-    .create();
-  ScriptApp.newTrigger('handleFeedbackEdit')
-    .forSpreadsheet(spreadsheet)
-    .onEdit()
-    .create();
+  installMvpSyncTriggers();
 }
 
 function handleFeedbackFormSubmit(event) {
