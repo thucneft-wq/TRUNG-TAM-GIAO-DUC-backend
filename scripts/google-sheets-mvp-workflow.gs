@@ -91,6 +91,7 @@ function handleMvpEdit(event) {
   if (STUDENT_SHEETS[sheetName] || STUDENT_MANAGEMENT_SHEETS[sheetName]) {
     return handleStudentEdit(event);
   }
+  if (sheetName === STUDENT_PARENT_SHEET_) return handleParentEdit(event);
   if (FEEDBACK_SYNC_SHEETS_.indexOf(sheetName) !== -1) return handleFeedbackEdit(event);
   if (isAssignmentSheet_(sheetName)) return handleAssignmentEdit(event);
 }

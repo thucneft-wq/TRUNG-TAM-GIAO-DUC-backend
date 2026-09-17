@@ -29,6 +29,11 @@ const STUDENT_PARENT_PHONE_SOURCE_HEADER = 'Số điện thoại phụ huynh';
 const STUDENT_PARENT_EMAIL_SOURCE_HEADER = 'Email phụ huynh';
 const STUDENT_PARENT_PHONE_ENTITY_HEADER = 'parent_phone_number';
 const STUDENT_PARENT_EMAIL_ENTITY_HEADER = 'parent_email';
+const STUDENT_PARENT_ID_ENTITY_HEADER = 'parent_id';
+const STUDENT_PARENT_SHEET_ = 'parents';
+const STUDENT_PARENT_LINK_SHEET_ = 'student_parents';
+const PARENT_STUDENT_IDS_HEADER_ = 'student_ids';
+const PARENT_STUDENT_NAMES_HEADER_ = 'student_names';
 
 /**
  * Run once to add the Sheet-side soft-delete control to both student tabs.
@@ -94,6 +99,25 @@ function setupStudentStatusColumns() {
 
 function installStudentSyncTriggers() {
   installMvpSyncTriggers();
+}
+
+/**
+ * Run once after adding this version to Apps Script. It adds the friendly
+ * parent-link columns and backfills the parent mirrors from students_THCS and
+ * students_THPT. The normalized relationship remains in student_parents.
+ */
+function setupStudentParentSync() {
+  setupStudentParentContactColumns_();
+  const spreadsheet = SpreadsheetApp.getActive();
+  Object.keys(STUDENT_MANAGEMENT_SHEETS).forEach(function(sheetName) {
+    const sheet = spreadsheet.getSheetByName(sheetName);
+    if (!sheet) return;
+    for (let row = 2; row <= sheet.getLastRow(); row += 1) {
+      syncStudentManagementRow_(sheet, row);
+    }
+  });
+  refreshParentStudentLabels_();
+  console.log('Đã liên kết và đồng bộ parents với students_THCS/students_THPT.');
 }
 
 function handleStudentFormSubmit(event) {
@@ -221,6 +245,14 @@ function syncStudentRow_(sheet, rowNumber) {
       status: normalizedStatus.toLowerCase(),
       school_name: payload.schoolName,
     };
+    const parentId = syncPrimaryParentSheetRecord_(
+      externalStudentId,
+      `${lastName} ${firstName}`.trim(),
+      payload.parentPhoneNumber,
+      payload.parentEmail,
+      optionalText_(row[STUDENT_PARENT_ID_ENTITY_HEADER]),
+    );
+    entityValues.parent_id = parentId;
     mvpUpsertEntityRow_('students', 'student_id', externalStudentId, entityValues);
     mvpUpsertStudentLevelRow_(schoolLevel, externalStudentId, entityValues);
     if (counselorExternalId) {
@@ -245,7 +277,7 @@ function syncStudentRow_(sheet, rowNumber) {
   }
 }
 
-function syncStudentManagementRow_(sheet, rowNumber) {
+function syncStudentManagementRow_(sheet, rowNumber, skipParentMirror) {
   const schoolLevel = STUDENT_MANAGEMENT_SHEETS[sheet.getName()];
   if (!schoolLevel) return false;
   const headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getDisplayValues()[0];
@@ -277,6 +309,15 @@ function syncStudentManagementRow_(sheet, rowNumber) {
     schoolName: optionalText_(row.school_name) || null,
   };
   postStudent_(payload);
+  const parentId = skipParentMirror
+    ? optionalText_(row[STUDENT_PARENT_ID_ENTITY_HEADER])
+    : syncPrimaryParentSheetRecord_(
+      externalStudentId,
+      `${lastName} ${firstName}`.trim(),
+      payload.parentPhoneNumber,
+      payload.parentEmail,
+      optionalText_(row[STUDENT_PARENT_ID_ENTITY_HEADER]),
+    );
   const entityValues = {
     first_name: firstName,
     last_name: lastName,
@@ -285,6 +326,7 @@ function syncStudentManagementRow_(sheet, rowNumber) {
     email: payload.email,
     parent_phone_number: payload.parentPhoneNumber,
     parent_email: payload.parentEmail,
+    parent_id: parentId,
     date_of_birth: payload.dateOfBirth,
     grade_level: Number.isFinite(gradeLevel) ? gradeLevel : '',
     status: normalizedStatus.toLowerCase(),
@@ -367,10 +409,247 @@ function setupStudentParentContactColumns_() {
   ['students', 'students_THCS', 'students_THPT'].forEach(function(sheetName) {
     const sheet = spreadsheet.getSheetByName(sheetName);
     if (!sheet) return;
-    [STUDENT_PARENT_PHONE_ENTITY_HEADER, STUDENT_PARENT_EMAIL_ENTITY_HEADER].forEach(function(header) {
+    [
+      STUDENT_PARENT_PHONE_ENTITY_HEADER,
+      STUDENT_PARENT_EMAIL_ENTITY_HEADER,
+      STUDENT_PARENT_ID_ENTITY_HEADER,
+    ].forEach(function(header) {
       ensureStudentColumn_(sheet, header);
     });
   });
+
+  const parentSheet = spreadsheet.getSheetByName(STUDENT_PARENT_SHEET_);
+  if (!parentSheet) throw new Error(`Không tìm thấy tab ${STUDENT_PARENT_SHEET_}.`);
+  [PARENT_STUDENT_IDS_HEADER_, PARENT_STUDENT_NAMES_HEADER_].forEach(function(header) {
+    ensureStudentColumn_(parentSheet, header);
+  });
+
+  const linkSheet = spreadsheet.getSheetByName(STUDENT_PARENT_LINK_SHEET_);
+  if (!linkSheet) throw new Error(`Không tìm thấy tab ${STUDENT_PARENT_LINK_SHEET_}.`);
+}
+
+function handleParentEdit(event) {
+  if (!event || !event.range || event.range.getRow() <= 1) return;
+  const sheet = event.range.getSheet();
+  if (sheet.getName() !== STUDENT_PARENT_SHEET_) return;
+  const firstRow = event.range.getRow();
+  const lastRow = firstRow + event.range.getNumRows() - 1;
+  for (let row = firstRow; row <= lastRow; row += 1) syncParentRow_(sheet, row);
+}
+
+function syncParentRow_(sheet, rowNumber) {
+  const row = studentRowObject_(sheet, rowNumber);
+  const parentId = optionalText_(row.parent_id);
+  if (!parentId) return false;
+
+  const studentIds = linkedStudentIdsForParent_(parentId);
+  studentIds.forEach(function(studentId) {
+    ['students', 'students_THCS', 'students_THPT'].forEach(function(sheetName) {
+      const studentSheet = SpreadsheetApp.getActive().getSheetByName(sheetName);
+      if (!studentSheet) return;
+      const studentRowNumber = findStudentRowByExternalId_(studentSheet, studentId);
+      if (!studentRowNumber) return;
+      setStudentCellIfPresent_(studentSheet, studentRowNumber, STUDENT_PARENT_ID_ENTITY_HEADER, parentId);
+      setStudentCellIfPresent_(studentSheet, studentRowNumber, STUDENT_PARENT_PHONE_ENTITY_HEADER, optionalText_(row.phone_number));
+      setStudentCellIfPresent_(studentSheet, studentRowNumber, STUDENT_PARENT_EMAIL_ENTITY_HEADER, optionalText_(row.email));
+      if (STUDENT_MANAGEMENT_SHEETS[sheetName]) {
+        syncStudentManagementRow_(studentSheet, studentRowNumber, true);
+      }
+    });
+  });
+  refreshParentStudentLabels_();
+  return true;
+}
+
+function syncPrimaryParentSheetRecord_(externalStudentId, studentName, phoneNumber, email, preferredParentId) {
+  const spreadsheet = SpreadsheetApp.getActive();
+  const parentSheet = spreadsheet.getSheetByName(STUDENT_PARENT_SHEET_);
+  const linkSheet = spreadsheet.getSheetByName(STUDENT_PARENT_LINK_SHEET_);
+  if (!parentSheet || !linkSheet) return '';
+
+  let parentId = parentIdLinkedToStudent_(externalStudentId);
+  if (!parentId && preferredParentId) parentId = preferredParentId;
+  if (!parentId && (phoneNumber || email)) parentId = findParentIdByContact_(phoneNumber, email);
+  if (!parentId && (phoneNumber || email)) parentId = nextSheetEntityId_(parentSheet, 'parent_id', 'PH');
+  if (!parentId) return '';
+
+  const existingParentRow = findEntityRow_(parentSheet, 'parent_id', parentId);
+  const parentValues = {
+    phone_number: phoneNumber || '',
+    email: email || '',
+    status: 'active',
+  };
+  if (!existingParentRow) {
+    parentValues.first_name = 'Phụ huynh';
+    parentValues.last_name = studentName || externalStudentId;
+  }
+  mvpUpsertEntityRow_(STUDENT_PARENT_SHEET_, 'parent_id', parentId, parentValues);
+
+  let linkRow = findStudentParentLinkRow_(externalStudentId, parentId);
+  if (!linkRow) {
+    const linkId = nextSheetEntityId_(linkSheet, 'student_parent_id', 'PHHS');
+    mvpUpsertEntityRow_(STUDENT_PARENT_LINK_SHEET_, 'student_parent_id', linkId, {
+      student_id: externalStudentId,
+      parent_id: parentId,
+      relationship: 'Phụ huynh',
+      is_primary: true,
+    });
+    linkRow = findStudentParentLinkRow_(externalStudentId, parentId);
+  } else {
+    setStudentCellIfPresent_(linkSheet, linkRow, 'is_primary', true);
+  }
+  refreshParentStudentLabels_();
+  return parentId;
+}
+
+function parentIdLinkedToStudent_(studentId) {
+  const sheet = SpreadsheetApp.getActive().getSheetByName(STUDENT_PARENT_LINK_SHEET_);
+  if (!sheet || sheet.getLastRow() <= 1) return '';
+  const headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getDisplayValues()[0]
+    .map(function(value) { return optionalText_(value); });
+  const studentIndex = headers.indexOf('student_id');
+  const parentIndex = headers.indexOf('parent_id');
+  const primaryIndex = headers.indexOf('is_primary');
+  if (studentIndex < 0 || parentIndex < 0) return '';
+  const rows = sheet.getRange(2, 1, sheet.getLastRow() - 1, sheet.getLastColumn()).getDisplayValues();
+  const matches = rows.filter(function(row) { return optionalText_(row[studentIndex]) === studentId; });
+  matches.sort(function(left, right) {
+    const leftPrimary = primaryIndex >= 0 && isTruthySheetValue_(left[primaryIndex]);
+    const rightPrimary = primaryIndex >= 0 && isTruthySheetValue_(right[primaryIndex]);
+    return Number(rightPrimary) - Number(leftPrimary);
+  });
+  return matches.length ? optionalText_(matches[0][parentIndex]) : '';
+}
+
+function linkedStudentIdsForParent_(parentId) {
+  const sheet = SpreadsheetApp.getActive().getSheetByName(STUDENT_PARENT_LINK_SHEET_);
+  if (!sheet || sheet.getLastRow() <= 1) return [];
+  const headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getDisplayValues()[0]
+    .map(function(value) { return optionalText_(value); });
+  const studentIndex = headers.indexOf('student_id');
+  const parentIndex = headers.indexOf('parent_id');
+  if (studentIndex < 0 || parentIndex < 0) return [];
+  return sheet.getRange(2, 1, sheet.getLastRow() - 1, sheet.getLastColumn()).getDisplayValues()
+    .filter(function(row) { return optionalText_(row[parentIndex]) === parentId; })
+    .map(function(row) { return optionalText_(row[studentIndex]); })
+    .filter(Boolean);
+}
+
+function findParentIdByContact_(phoneNumber, email) {
+  const sheet = SpreadsheetApp.getActive().getSheetByName(STUDENT_PARENT_SHEET_);
+  if (!sheet || sheet.getLastRow() <= 1) return '';
+  const headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getDisplayValues()[0]
+    .map(function(value) { return optionalText_(value); });
+  const idIndex = headers.indexOf('parent_id');
+  const phoneIndex = headers.indexOf('phone_number');
+  const emailIndex = headers.indexOf('email');
+  const normalizedEmail = optionalText_(email).toLowerCase();
+  const rows = sheet.getRange(2, 1, sheet.getLastRow() - 1, sheet.getLastColumn()).getDisplayValues();
+  const matched = rows.find(function(row) {
+    return (phoneNumber && phoneIndex >= 0 && optionalText_(row[phoneIndex]) === phoneNumber)
+      || (normalizedEmail && emailIndex >= 0 && optionalText_(row[emailIndex]).toLowerCase() === normalizedEmail);
+  });
+  return matched && idIndex >= 0 ? optionalText_(matched[idIndex]) : '';
+}
+
+function findStudentParentLinkRow_(studentId, parentId) {
+  const sheet = SpreadsheetApp.getActive().getSheetByName(STUDENT_PARENT_LINK_SHEET_);
+  if (!sheet || sheet.getLastRow() <= 1) return 0;
+  const headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getDisplayValues()[0]
+    .map(function(value) { return optionalText_(value); });
+  const studentIndex = headers.indexOf('student_id');
+  const parentIndex = headers.indexOf('parent_id');
+  if (studentIndex < 0 || parentIndex < 0) return 0;
+  const rows = sheet.getRange(2, 1, sheet.getLastRow() - 1, sheet.getLastColumn()).getDisplayValues();
+  const index = rows.findIndex(function(row) {
+    return optionalText_(row[studentIndex]) === studentId && optionalText_(row[parentIndex]) === parentId;
+  });
+  return index < 0 ? 0 : index + 2;
+}
+
+function refreshParentStudentLabels_() {
+  const spreadsheet = SpreadsheetApp.getActive();
+  const parentSheet = spreadsheet.getSheetByName(STUDENT_PARENT_SHEET_);
+  if (!parentSheet || parentSheet.getLastRow() <= 1) return;
+  const headers = parentSheet.getRange(1, 1, 1, parentSheet.getLastColumn()).getDisplayValues()[0]
+    .map(function(value) { return optionalText_(value); });
+  const idIndex = headers.indexOf('parent_id');
+  const idsIndex = headers.indexOf(PARENT_STUDENT_IDS_HEADER_);
+  const namesIndex = headers.indexOf(PARENT_STUDENT_NAMES_HEADER_);
+  if (idIndex < 0 || idsIndex < 0 || namesIndex < 0) return;
+  const rows = parentSheet.getRange(2, 1, parentSheet.getLastRow() - 1, parentSheet.getLastColumn()).getValues();
+  rows.forEach(function(row, index) {
+    const parentId = optionalText_(row[idIndex]);
+    if (!parentId) return;
+    const studentIds = linkedStudentIdsForParent_(parentId);
+    const names = studentIds.map(function(studentId) { return studentNameByExternalId_(studentId); }).filter(Boolean);
+    parentSheet.getRange(index + 2, idsIndex + 1).setValue(studentIds.join(', '));
+    parentSheet.getRange(index + 2, namesIndex + 1).setValue(names.join(', '));
+  });
+}
+
+function studentNameByExternalId_(studentId) {
+  const spreadsheet = SpreadsheetApp.getActive();
+  const sheetNames = ['students_THCS', 'students_THPT', 'students'];
+  for (let index = 0; index < sheetNames.length; index += 1) {
+    const sheet = spreadsheet.getSheetByName(sheetNames[index]);
+    const rowNumber = sheet ? findStudentRowByExternalId_(sheet, studentId) : 0;
+    if (!rowNumber) continue;
+    const row = studentRowObject_(sheet, rowNumber);
+    return `${optionalText_(row.last_name)} ${optionalText_(row.first_name)}`.trim();
+  }
+  return '';
+}
+
+function findStudentRowByExternalId_(sheet, studentId) {
+  return findEntityRow_(sheet, 'student_id', studentId);
+}
+
+function findEntityRow_(sheet, idHeader, idValue) {
+  if (!sheet || sheet.getLastRow() <= 1) return 0;
+  const headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getDisplayValues()[0]
+    .map(function(value) { return optionalText_(value); });
+  const idIndex = headers.indexOf(idHeader);
+  if (idIndex < 0) return 0;
+  const ids = sheet.getRange(2, idIndex + 1, sheet.getLastRow() - 1, 1).getDisplayValues().flat();
+  const index = ids.findIndex(function(value) { return optionalText_(value) === idValue; });
+  return index < 0 ? 0 : index + 2;
+}
+
+function studentRowObject_(sheet, rowNumber) {
+  const headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getDisplayValues()[0];
+  const values = sheet.getRange(rowNumber, 1, 1, sheet.getLastColumn()).getValues()[0];
+  return Object.fromEntries(headers.map(function(header, index) {
+    return [optionalText_(header), values[index]];
+  }));
+}
+
+function setStudentCellIfPresent_(sheet, rowNumber, header, value) {
+  const headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getDisplayValues()[0]
+    .map(function(item) { return optionalText_(item); });
+  const index = headers.indexOf(header);
+  if (index >= 0) sheet.getRange(rowNumber, index + 1).setValue(value || '');
+}
+
+function nextSheetEntityId_(sheet, idHeader, prefix) {
+  const headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getDisplayValues()[0]
+    .map(function(value) { return optionalText_(value); });
+  const idIndex = headers.indexOf(idHeader);
+  if (idIndex < 0) throw new Error(`Tab ${sheet.getName()} thiếu cột ${idHeader}.`);
+  const values = sheet.getLastRow() > 1
+    ? sheet.getRange(2, idIndex + 1, sheet.getLastRow() - 1, 1).getDisplayValues().flat()
+    : [];
+  const pattern = new RegExp('^' + prefix + '-([0-9]+)$', 'i');
+  const maximum = values.reduce(function(current, value) {
+    const match = optionalText_(value).match(pattern);
+    return match ? Math.max(current, Number(match[1])) : current;
+  }, 0);
+  return `${prefix}-${String(maximum + 1).padStart(2, '0')}`;
+}
+
+function isTruthySheetValue_(value) {
+  const normalized = optionalText_(value).toLowerCase();
+  return value === true || normalized === 'true' || normalized === '1' || normalized === 'yes';
 }
 
 function ensureStudentColumn_(sheet, header) {
