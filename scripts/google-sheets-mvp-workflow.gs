@@ -74,6 +74,7 @@ function installMvpSyncTriggers() {
 function handleMvpChange(event) {
   if (!event || event.changeType !== 'REMOVE_ROW') return;
   counselorHandleSheetRowDeletion_();
+  studentHandleSheetRowDeletion_();
 }
 
 function handleMvpEdit(event) {

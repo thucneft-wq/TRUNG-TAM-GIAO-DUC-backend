@@ -16,6 +16,11 @@ export const createIntegrationRouter = (
     asyncHandler(studentController.syncFromGoogleSheets),
   );
   router.post(
+    '/google-sheets/students/reconcile',
+    createGoogleSheetsAuthMiddleware(googleSheetsSyncSecret),
+    asyncHandler(studentController.reconcileFromGoogleSheets),
+  );
+  router.post(
     '/google-sheets/counselors',
     createGoogleSheetsAuthMiddleware(googleSheetsSyncSecret),
     asyncHandler(googleSheetsController.syncCounselor),

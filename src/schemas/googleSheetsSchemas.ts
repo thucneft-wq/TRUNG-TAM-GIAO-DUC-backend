@@ -148,3 +148,9 @@ export const googleSheetsAssignmentSchema = z.object({
     ),
     { message: 'Provide a counselor identifier.', path: ['counselorId'] },
   );
+
+export const googleSheetsStudentReconcileSchema = z.object({
+  activeExternalStudentIds: z.array(
+    z.string().trim().min(1).max(50).regex(/^[A-Za-z0-9][A-Za-z0-9_-]*$/),
+  ).max(10000).default([]),
+}).strict();

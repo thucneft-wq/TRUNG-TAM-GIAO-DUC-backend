@@ -256,6 +256,14 @@ const createStudentRepository = (): StudentRepositoryPort => ({
   update: async () => studentRow,
   deactivate: async () => true,
   ensureAutomaticAssignment: async () => false,
+  syncAssignment: async () => ({
+    assignmentId: null,
+    studentId: studentRow.student_id,
+    counselorId: studentRow.assigned_counselor_id ?? '',
+    status: 'INACTIVE',
+    created: false,
+  }),
+  reconcileActiveExternalIds: async () => ({ deactivatedStudents: 0, closedAssignments: 0 }),
   approve: async () => true,
   reject: async () => true,
 });

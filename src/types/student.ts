@@ -109,3 +109,12 @@ export interface StudentAssignmentSyncResult {
   status: 'ACTIVE' | 'INACTIVE';
   created: boolean;
 }
+
+export interface GoogleSheetsStudentReconcileInput {
+  activeExternalStudentIds: string[];
+}
+
+export interface StudentReconcileResult {
+  deactivatedStudents: number;
+  closedAssignments: number;
+}

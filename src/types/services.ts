@@ -11,6 +11,7 @@ import type {
   StudentAccessScope,
   StudentAssignmentSyncResult,
   StudentDto,
+  StudentReconcileResult,
   UpdateStudentInput,
 } from './student.js';
 import type {
@@ -61,6 +62,7 @@ export interface StudentServicePort {
   syncAssignmentFromGoogleSheets(
     input: GoogleSheetsAssignmentInput,
   ): Promise<StudentAssignmentSyncResult>;
+  reconcileFromGoogleSheets(activeExternalStudentIds: string[]): Promise<StudentReconcileResult>;
 }
 
 export interface DashboardServicePort {

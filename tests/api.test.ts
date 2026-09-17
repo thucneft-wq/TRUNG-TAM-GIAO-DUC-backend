@@ -112,6 +112,17 @@ const createDependencies = (): AppDependencies => ({
     update: async () => studentFixture,
     deactivate: async () => undefined,
     syncFromGoogleSheets: async () => ({ student: studentFixture, created: true }),
+    syncAssignmentFromGoogleSheets: async () => ({
+      assignmentId: null,
+      studentId: STUDENT_ID,
+      counselorId: COUNSELOR_ID,
+      status: 'INACTIVE',
+      created: false,
+    }),
+    reconcileFromGoogleSheets: async () => ({
+      deactivatedStudents: 0,
+      closedAssignments: 0,
+    }),
   },
   dashboardService: {
     get: async () => ({ activeCounselors: 1 }),
@@ -329,6 +340,39 @@ test('Google Sheets webhook requires its secret and synchronizes Student data', 
   assert.equal(synchronized, true);
   assert.equal(synchronizedLevel, 'THCS');
   assert.equal(synchronizedSchool, 'Trường THCS Mẫu');
+});
+
+test('Google Sheets reconciliation soft-deactivates students missing from management tabs', async () => {
+  let receivedIds: string[] = [];
+  const dependencies = createDependencies();
+  dependencies.studentService.reconcileFromGoogleSheets = async (activeExternalStudentIds) => {
+    receivedIds = activeExternalStudentIds;
+    return { deactivatedStudents: 3, closedAssignments: 2 };
+  };
+  const body = JSON.stringify({ activeExternalStudentIds: ['HS-07'] });
+
+  const unauthorized = await request(
+    dependencies,
+    '/api/integrations/google-sheets/students/reconcile',
+    { method: 'POST', headers: { 'Content-Type': 'application/json' }, body },
+  );
+  assert.equal(unauthorized.status, 401);
+
+  const authorized = await request(
+    dependencies,
+    '/api/integrations/google-sheets/students/reconcile',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${SYNC_SECRET}` },
+      body,
+    },
+  );
+  assert.equal(authorized.status, 200);
+  assert.deepEqual(receivedIds, ['HS-07']);
+  assert.deepEqual(await authorized.json(), {
+    deactivatedStudents: 3,
+    closedAssignments: 2,
+  });
 });
 
 test('health check is available at both the canonical path and its root alias', async () => {

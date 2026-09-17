@@ -150,6 +150,10 @@ export class StudentService implements StudentServicePort {
     };
   }
 
+  async reconcileFromGoogleSheets(activeExternalStudentIds: string[]) {
+    return this.repository.reconcileActiveExternalIds(activeExternalStudentIds);
+  }
+
   async syncAssignmentFromGoogleSheets(
     input: GoogleSheetsAssignmentInput,
   ): Promise<StudentAssignmentSyncResult> {

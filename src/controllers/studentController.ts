@@ -6,6 +6,7 @@ import {
 } from '../schemas/studentSchemas.js';
 import {
   googleSheetsAssignmentSchema,
+  googleSheetsStudentReconcileSchema,
 } from '../schemas/googleSheetsSchemas.js';
 import type { AnalyticsServicePort, StudentServicePort } from '../types/services.js';
 import type { StudentAccessScope } from '../types/student.js';
@@ -91,5 +92,19 @@ export class StudentController {
       assignment.assignmentId,
     );
     response.status(assignment.created ? 201 : 200).json({ assignment });
+  };
+
+  reconcileFromGoogleSheets = async (request: Request, response: Response): Promise<void> => {
+    const input = googleSheetsStudentReconcileSchema.parse(request.body);
+    const result = await this.studentService.reconcileFromGoogleSheets(
+      input.activeExternalStudentIds,
+    );
+    await this.analyticsService.recordAudit(
+      'google-sheets',
+      'SYNC_RECONCILE_STUDENTS',
+      'Student',
+      null,
+    );
+    response.status(200).json(result);
   };
 }

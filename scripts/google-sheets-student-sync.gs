@@ -34,6 +34,7 @@ const STUDENT_PARENT_SHEET_ = 'parents';
 const STUDENT_PARENT_LINK_SHEET_ = 'student_parents';
 const PARENT_STUDENT_IDS_HEADER_ = 'student_ids';
 const PARENT_STUDENT_NAMES_HEADER_ = 'student_names';
+const STUDENT_DELETION_SNAPSHOT_SHEET_ = '_student_deletion_snapshot';
 
 /**
  * Run once to add the Sheet-side soft-delete control to both student tabs.
@@ -95,6 +96,7 @@ function setupStudentStatusColumns() {
     sheet.getRange(2, statusColumn, statuses.length, 1).setValues(statuses);
   });
   setupStudentParentContactColumns_();
+  studentRefreshDeletionSnapshot_();
 }
 
 function installStudentSyncTriggers() {
@@ -117,12 +119,15 @@ function setupStudentParentSync() {
     }
   });
   refreshParentStudentLabels_();
+  postStudentReconcile_(studentAllCurrentIds_());
+  studentRefreshDeletionSnapshot_();
   console.log('Đã liên kết và đồng bộ parents với students_THCS/students_THPT.');
 }
 
 function handleStudentFormSubmit(event) {
   if (!event || !event.range) throw new Error('Thiếu dữ liệu sự kiện gửi Google Form.');
   syncStudentRow_(event.range.getSheet(), event.range.getRow());
+  studentRefreshDeletionSnapshot_();
 }
 
 function handleStudentEdit(event) {
@@ -132,10 +137,12 @@ function handleStudentEdit(event) {
   const lastRow = firstRow + event.range.getNumRows() - 1;
   if (STUDENT_SHEETS[sheet.getName()]) {
     for (let row = firstRow; row <= lastRow; row += 1) syncStudentRow_(sheet, row);
+    studentRefreshDeletionSnapshot_();
     return;
   }
   if (STUDENT_MANAGEMENT_SHEETS[sheet.getName()]) {
     for (let row = firstRow; row <= lastRow; row += 1) syncStudentManagementRow_(sheet, row);
+    studentRefreshDeletionSnapshot_();
   }
 }
 
@@ -152,6 +159,7 @@ function syncAllStudents() {
     }
   });
   mvpRefreshStudentLevelSheets_();
+  studentRefreshDeletionSnapshot_();
   console.log(`Đồng bộ hoàn tất: ${syncedCount} dòng, bỏ qua ${skippedCount} dòng trống/chưa đủ dữ liệu.`);
 }
 
@@ -666,6 +674,234 @@ function nextSheetEntityId_(sheet, idHeader, prefix) {
 function isTruthySheetValue_(value) {
   const normalized = optionalText_(value).toLowerCase();
   return value === true || normalized === 'true' || normalized === '1' || normalized === 'yes';
+}
+
+/** Soft-deactivate exactly the student rows that disappeared from a management tab. */
+function studentHandleSheetRowDeletion_() {
+  const spreadsheet = SpreadsheetApp.getActive();
+  const snapshot = spreadsheet.getSheetByName(STUDENT_DELETION_SNAPSHOT_SHEET_);
+  if (!snapshot || snapshot.getLastRow() <= 1) {
+    postStudentReconcile_(studentAllCurrentIds_());
+    studentRefreshDeletionSnapshot_();
+    return;
+  }
+
+  const headers = snapshot.getRange(1, 1, 1, snapshot.getLastColumn()).getDisplayValues()[0];
+  const entries = snapshot.getRange(2, 1, snapshot.getLastRow() - 1, snapshot.getLastColumn())
+    .getValues()
+    .map(function(values) {
+      return Object.fromEntries(headers.map(function(header, index) { return [header, values[index]]; }));
+    });
+  const currentIdsBySheet = {};
+  Object.keys(STUDENT_MANAGEMENT_SHEETS).forEach(function(sheetName) {
+    currentIdsBySheet[sheetName] = studentCurrentIdsForSheet_(sheetName);
+  });
+
+  entries.forEach(function(entry) {
+    const sourceSheet = optionalText_(entry.source_sheet);
+    const externalId = optionalText_(entry.external_student_id);
+    if (!externalId || !currentIdsBySheet[sourceSheet]) return;
+    if (currentIdsBySheet[sourceSheet].indexOf(externalId.toUpperCase()) !== -1) return;
+    studentDeactivateSnapshotEntry_(entry, sourceSheet, 'Xóa dòng trên Sheet - tự động ngừng hoạt động');
+  });
+  postStudentReconcile_(studentAllCurrentIds_());
+  studentRefreshDeletionSnapshot_();
+}
+
+/**
+ * One-time cleanup: students marked ACTIVE in the entity tab but absent from
+ * both official management tabs are soft-deactivated in the database.
+ */
+function reconcileActiveStudentsFromManagementSheets() {
+  const spreadsheet = SpreadsheetApp.getActive();
+  const entitySheet = spreadsheet.getSheetByName('students');
+  if (!entitySheet || entitySheet.getLastRow() <= 1) {
+    studentRefreshDeletionSnapshot_();
+    return;
+  }
+  const officialIds = [];
+  Object.keys(STUDENT_MANAGEMENT_SHEETS).forEach(function(sheetName) {
+    studentCurrentIdsForSheet_(sheetName).forEach(function(id) {
+      if (officialIds.indexOf(id) === -1) officialIds.push(id);
+    });
+  });
+  const headers = entitySheet.getRange(1, 1, 1, entitySheet.getLastColumn()).getDisplayValues()[0];
+  const rows = entitySheet.getRange(2, 1, entitySheet.getLastRow() - 1, entitySheet.getLastColumn()).getValues();
+  let deactivated = 0;
+  rows.forEach(function(values) {
+    const entry = Object.fromEntries(headers.map(function(header, index) { return [header, values[index]]; }));
+    const externalId = optionalText_(entry.student_id || entry.external_student_id);
+    if (!externalId || officialIds.indexOf(externalId.toUpperCase()) !== -1) return;
+    entry.external_student_id = externalId;
+    entry.source_sheet = 'students';
+    if (studentDeactivateSnapshotEntry_(
+      entry,
+      'students',
+      'Không còn trong Sheet quản lý - tự động ngừng hoạt động',
+      true,
+    )) deactivated += 1;
+  });
+  const result = postStudentReconcile_(officialIds);
+  studentRefreshDeletionSnapshot_();
+  console.log(
+    `Đã chuyển ${deactivated + Number(result.deactivatedStudents || 0)} học sinh không còn trên Sheet sang INACTIVE.`,
+  );
+}
+
+function postStudentReconcile_(activeExternalStudentIds) {
+  const properties = PropertiesService.getScriptProperties();
+  const baseUrl = requiredText_(
+    properties.getProperty('BACKEND_SYNC_BASE_URL') || properties.getProperty('BACKEND_BASE_URL'),
+    'BACKEND_SYNC_BASE_URL/BACKEND_BASE_URL',
+  ).replace(/\/$/, '');
+  const secret = requiredText_(properties.getProperty('GOOGLE_SHEETS_SYNC_SECRET'), 'GOOGLE_SHEETS_SYNC_SECRET');
+  const endpoint = /\/integrations\/google-sheets$/i.test(baseUrl)
+    ? `${baseUrl}/students/reconcile`
+    : `${baseUrl}/integrations/google-sheets/students/reconcile`;
+  const response = UrlFetchApp.fetch(endpoint, {
+    method: 'post',
+    contentType: 'application/json',
+    headers: { Authorization: `Bearer ${secret}` },
+    payload: JSON.stringify({ activeExternalStudentIds }),
+    muteHttpExceptions: true,
+  });
+  const status = response.getResponseCode();
+  if (status < 200 || status >= 300) {
+    throw new Error(`Backend reconcile trả về HTTP ${status}: ${response.getContentText()}`);
+  }
+  const text = response.getContentText();
+  return text ? JSON.parse(text) : { deactivatedStudents: 0, closedAssignments: 0 };
+}
+
+function studentDeactivateSnapshotEntry_(entry, sourceSheet, reason, forceDeactivate) {
+  if (!forceDeactivate && !studentStatusIsActive_(entry.status)) return false;
+  const externalId = optionalText_(entry.external_student_id || entry.student_id);
+  const firstName = optionalText_(entry.first_name) || 'Học sinh';
+  const lastName = optionalText_(entry.last_name) || externalId;
+  const phoneNumber = optionalText_(entry.phone_number);
+  if (!externalId || !phoneNumber) return false;
+  const schoolLevel = optionalText_(entry.school_level)
+    || STUDENT_MANAGEMENT_SHEETS[sourceSheet]
+    || null;
+  const payload = {
+    externalStudentId: externalId,
+    firstName,
+    lastName,
+    gender: normalizeGender_(entry.gender),
+    phoneNumber,
+    email: optionalText_(entry.email) || null,
+    parentPhoneNumber: optionalText_(entry.parent_phone_number) || null,
+    parentEmail: optionalText_(entry.parent_email) || null,
+    dateOfBirth: normalizeDate_(entry.date_of_birth),
+    status: 'INACTIVE',
+    schoolLevel,
+    schoolName: optionalText_(entry.school_name) || null,
+  };
+  postStudent_(payload);
+  mvpUpsertEntityRow_('students', 'student_id', externalId, {
+    first_name: firstName,
+    last_name: lastName,
+    gender: payload.gender,
+    phone_number: phoneNumber,
+    email: payload.email,
+    parent_phone_number: payload.parentPhoneNumber,
+    parent_email: payload.parentEmail,
+    date_of_birth: payload.dateOfBirth,
+    grade_level: entry.grade_level || '',
+    status: 'inactive',
+    school_name: payload.schoolName,
+    school_id: optionalText_(entry.school_id),
+    address_id: optionalText_(entry.address_id),
+  });
+  studentDeactivateAssignmentRows_(externalId);
+  mvpAppendArchive_({
+    entityType: 'STUDENT',
+    externalId,
+    displayName: `${lastName} ${firstName}`.trim(),
+    sourceSheet,
+    previousStatus: 'ACTIVE',
+    reason,
+  });
+  return true;
+}
+
+function studentDeactivateAssignmentRows_(externalStudentId) {
+  const sheet = SpreadsheetApp.getActive().getSheetByName('counselor_assignments');
+  if (!sheet || sheet.getLastRow() <= 1) return;
+  const headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getDisplayValues()[0]
+    .map(function(value) { return optionalText_(value); });
+  const studentIndex = headers.indexOf('student_id');
+  const statusIndex = headers.indexOf('status');
+  const updatedIndex = headers.indexOf('updated_at');
+  if (studentIndex < 0 || statusIndex < 0) return;
+  const rows = sheet.getRange(2, 1, sheet.getLastRow() - 1, sheet.getLastColumn()).getValues();
+  rows.forEach(function(row, index) {
+    if (optionalText_(row[studentIndex]).toUpperCase() !== externalStudentId.toUpperCase()) return;
+    sheet.getRange(index + 2, statusIndex + 1).setValue('inactive');
+    if (updatedIndex >= 0) sheet.getRange(index + 2, updatedIndex + 1).setValue(new Date());
+  });
+}
+
+function studentRefreshDeletionSnapshot_() {
+  const spreadsheet = SpreadsheetApp.getActive();
+  let snapshot = spreadsheet.getSheetByName(STUDENT_DELETION_SNAPSHOT_SHEET_);
+  if (!snapshot) snapshot = spreadsheet.insertSheet(STUDENT_DELETION_SNAPSHOT_SHEET_);
+  const snapshotHeaders = [
+    'source_sheet', 'external_student_id', 'first_name', 'last_name', 'gender',
+    'phone_number', 'email', 'parent_phone_number', 'parent_email', 'date_of_birth',
+    'grade_level', 'status', 'school_level', 'school_id', 'school_name', 'address_id',
+  ];
+  const rows = [];
+  Object.keys(STUDENT_MANAGEMENT_SHEETS).forEach(function(sheetName) {
+    const sheet = spreadsheet.getSheetByName(sheetName);
+    if (!sheet || sheet.getLastRow() <= 1) return;
+    const headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getDisplayValues()[0];
+    const values = sheet.getRange(2, 1, sheet.getLastRow() - 1, sheet.getLastColumn()).getValues();
+    values.forEach(function(row) {
+      const entry = Object.fromEntries(headers.map(function(header, index) { return [header, row[index]]; }));
+      const externalId = optionalText_(entry.student_id);
+      if (!externalId) return;
+      rows.push([
+        sheetName, externalId, entry.first_name || '', entry.last_name || '', entry.gender || '',
+        entry.phone_number || '', entry.email || '', entry.parent_phone_number || '',
+        entry.parent_email || '', entry.date_of_birth || '', entry.grade_level || '',
+        entry.status || '', STUDENT_MANAGEMENT_SHEETS[sheetName], entry.school_id || '',
+        entry.school_name || '', entry.address_id || '',
+      ]);
+    });
+  });
+  snapshot.clearContents();
+  snapshot.getRange(1, 1, 1, snapshotHeaders.length).setValues([snapshotHeaders]);
+  if (rows.length) snapshot.getRange(2, 1, rows.length, snapshotHeaders.length).setValues(rows);
+  if (!snapshot.isSheetHidden()) snapshot.hideSheet();
+}
+
+function studentCurrentIdsForSheet_(sheetName) {
+  const sheet = SpreadsheetApp.getActive().getSheetByName(sheetName);
+  if (!sheet || sheet.getLastRow() <= 1) return [];
+  const headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getDisplayValues()[0];
+  const idIndex = headers.indexOf('student_id');
+  if (idIndex < 0) return [];
+  return sheet.getRange(2, idIndex + 1, sheet.getLastRow() - 1, 1).getDisplayValues()
+    .map(function(values) { return optionalText_(values[0]).toUpperCase(); })
+    .filter(Boolean);
+}
+
+function studentAllCurrentIds_() {
+  const ids = [];
+  Object.keys(STUDENT_MANAGEMENT_SHEETS).forEach(function(sheetName) {
+    studentCurrentIdsForSheet_(sheetName).forEach(function(id) {
+      if (ids.indexOf(id) === -1) ids.push(id);
+    });
+  });
+  return ids;
+}
+
+function studentStatusIsActive_(value) {
+  const normalized = optionalText_(value).toLocaleLowerCase('vi-VN');
+  return !normalized
+    || normalized === 'active'
+    || normalized === STUDENT_STATUS_ACTIVE_LABEL.toLocaleLowerCase('vi-VN');
 }
 
 function ensureStudentColumn_(sheet, header) {

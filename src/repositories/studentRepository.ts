@@ -4,6 +4,7 @@ import type {
   GoogleSheetsAssignmentInput,
   StudentAccessScope,
   StudentAssignmentSyncResult,
+  StudentReconcileResult,
   StudentRow,
   UpdateStudentInput,
 } from '../types/student.js';
@@ -32,6 +33,7 @@ export interface StudentRepositoryPort {
   /** Soft-reject a PENDING_REVIEW student (status → REJECTED). */
   reject(studentId: string): Promise<boolean>;
   syncAssignment(input: GoogleSheetsAssignmentInput): Promise<StudentAssignmentSyncResult>;
+  reconcileActiveExternalIds(activeExternalStudentIds: string[]): Promise<StudentReconcileResult>;
 }
 
 const STUDENT_SELECT = `
@@ -625,6 +627,67 @@ export class PgStudentRepository implements StudentRepositoryPort {
       SELECT reconcile_student_assignment_from_booking($1::UUID) AS assigned
     `, [studentId]);
     return result.rows[0]?.assigned === true;
+  }
+
+  async reconcileActiveExternalIds(
+    activeExternalStudentIds: string[],
+  ): Promise<StudentReconcileResult> {
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query(
+        "SELECT pg_advisory_xact_lock(hashtext('google-sheets-student-reconcile'))",
+      );
+      const normalizedIds = [...new Set(
+        activeExternalStudentIds.map((id) => id.trim().toUpperCase()).filter(Boolean),
+      )];
+      const stale = await client.query<{ student_id: string }>(`
+        SELECT student_id
+        FROM Students
+        WHERE UPPER(status) = 'ACTIVE'
+          AND (
+            external_student_id IS NULL
+            OR NOT (UPPER(external_student_id) = ANY($1::TEXT[]))
+          )
+        FOR UPDATE
+      `, [normalizedIds]);
+      const staleIds = stale.rows.map((row) => row.student_id);
+      if (staleIds.length === 0) {
+        await client.query('COMMIT');
+        return { deactivatedStudents: 0, closedAssignments: 0 };
+      }
+
+      await client.query(`
+        UPDATE Counselor_Assignment_Records car
+        SET status = 'INACTIVE', ended_at = COALESCE(car.ended_at, now()), updated_at = now()
+        FROM Counselor_Assignments ca
+        WHERE ca.assignment_id = car.assignment_id
+          AND ca.student_id = ANY($1::UUID[])
+          AND UPPER(car.status) = 'ACTIVE'
+      `, [staleIds]);
+      const assignments = await client.query(`
+        UPDATE Counselor_Assignments
+        SET status = 'INACTIVE', updated_at = now()
+        WHERE student_id = ANY($1::UUID[])
+          AND UPPER(status) = 'ACTIVE'
+      `, [staleIds]);
+      const students = await client.query(`
+        UPDATE Students
+        SET status = 'INACTIVE', updated_at = now()
+        WHERE student_id = ANY($1::UUID[])
+          AND UPPER(status) = 'ACTIVE'
+      `, [staleIds]);
+      await client.query('COMMIT');
+      return {
+        deactivatedStudents: students.rowCount ?? 0,
+        closedAssignments: assignments.rowCount ?? 0,
+      };
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
   }
 
   async reconcileCounselorAssignments(
