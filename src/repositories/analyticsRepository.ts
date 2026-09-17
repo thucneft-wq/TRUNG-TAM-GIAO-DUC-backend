@@ -95,6 +95,7 @@ export class PgAnalyticsRepository implements AnalyticsRepositoryPort {
         SELECT counselor_id AS id, CONCAT_WS(' ', first_name, last_name) AS name
         FROM Counselors
         WHERE UPPER(status) = 'ACTIVE'
+          AND external_counselor_id IS NOT NULL
         ORDER BY last_name, first_name
       `),
       this.pool.query(`

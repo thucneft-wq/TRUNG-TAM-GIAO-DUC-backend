@@ -30,6 +30,7 @@ WITH counselor_scope AS (
     FROM Counselors c
     WHERE ($1::UUID IS NULL OR c.counselor_id = $1::UUID)
       AND (NOT $2::BOOLEAN OR UPPER(c.status) IN ('ACTIVE', 'ON_LEAVE'))
+      AND (NOT $2::BOOLEAN OR c.external_counselor_id IS NOT NULL)
 ), caseload_cases AS (
     SELECT
         car.counselor_id,
@@ -240,7 +241,12 @@ RETURNING counselor_id
 const DASHBOARD_COUNTS_SQL = `
 SELECT
     (SELECT COUNT(*)::INT FROM Students WHERE UPPER(status) = 'ACTIVE') AS total_students,
-    (SELECT COUNT(*)::INT FROM Counselors WHERE UPPER(status) = 'ACTIVE') AS active_counselors,
+    (
+      SELECT COUNT(*)::INT
+      FROM Counselors
+      WHERE UPPER(status) = 'ACTIVE'
+        AND external_counselor_id IS NOT NULL
+    ) AS active_counselors,
     (SELECT COUNT(*)::INT FROM Tests WHERE UPPER(status) = 'ACTIVE') AS total_tests,
     (
       SELECT COUNT(*)::INT

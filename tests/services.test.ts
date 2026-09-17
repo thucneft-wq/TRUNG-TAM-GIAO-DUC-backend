@@ -130,6 +130,7 @@ test('Admin KPI query follows the official formulas', () => {
     COUNSELOR_ANALYTICS_SQL,
     /UPPER\(c\.status\) IN \('ACTIVE', 'ON_LEAVE'\)/,
   );
+  assert.match(COUNSELOR_ANALYTICS_SQL, /c\.external_counselor_id IS NOT NULL/);
   assert.match(COUNSELOR_ANALYTICS_SQL, /car\.ended_at IS NULL/);
   assert.match(COUNSELOR_ANALYTICS_SQL, /UPPER\(s\.status\) = 'COMPLETED'/);
   assert.doesNotMatch(COUNSELOR_ANALYTICS_SQL, /s\.ended_at IS NOT NULL/);
