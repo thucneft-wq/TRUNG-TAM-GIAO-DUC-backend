@@ -103,7 +103,9 @@ official `counselors` tab.
 Changing an existing application to `Chờ duyệt`, `Từ chối`, or `Ngừng hoạt động`
 soft-deactivates the corresponding database profile. The record remains available for
 audit, while active Web lists omit it. Run `setupCounselorApprovalColumns()` once to add
-the approval dropdown and `installCounselorSyncTriggers()` once to install its triggers.
+the approval dropdown and hide the technical `Mã tư vấn viên` and `Trạng thái đồng bộ`
+columns from the intake view. The columns remain stored for ID stability and support.
+Run `installCounselorSyncTriggers()` once to install its triggers.
 
 When a counselor becomes `ACTIVE`, the backend immediately attempts to assign every
 active Student that does not have a valid active counselor. Assignment uses the

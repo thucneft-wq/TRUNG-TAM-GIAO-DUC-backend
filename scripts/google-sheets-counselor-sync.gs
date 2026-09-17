@@ -18,6 +18,8 @@ function setupCounselorApprovalColumns() {
   });
   const headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getDisplayValues()[0];
   const statusColumn = headers.indexOf(COUNSELOR_STATUS_HEADER_) + 1;
+  const idColumn = headers.indexOf(COUNSELOR_ID_HEADER_) + 1;
+  const syncColumn = headers.indexOf(COUNSELOR_SYNC_HEADER_) + 1;
   const validation = SpreadsheetApp.newDataValidation()
     .requireValueInList([
       COUNSELOR_PENDING_LABEL_,
@@ -35,6 +37,8 @@ function setupCounselorApprovalColumns() {
     'Đăng ký mới mặc định Chờ duyệt và không xuất hiện trên Web. Chọn Đã duyệt để kích hoạt.',
   );
   sheet.setColumnWidth(statusColumn, 170);
+  if (idColumn > 0) sheet.hideColumns(idColumn);
+  if (syncColumn > 0) sheet.hideColumns(syncColumn);
 }
 
 function installCounselorSyncTriggers() {
