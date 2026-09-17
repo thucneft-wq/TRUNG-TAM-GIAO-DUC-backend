@@ -65,7 +65,14 @@ function handleMvpEdit(event) {
   if (!event || !event.range || event.range.getRow() <= 1) return;
   const sheetName = event.range.getSheet().getName();
 
-  if (sheetName === COUNSELOR_FORM_SHEET_) return handleCounselorEdit(event);
+  if (sheetName === COUNSELOR_FORM_SHEET_) {
+    const firstColumn = event.range.getColumn();
+    const lastColumn = firstColumn + event.range.getNumColumns() - 1;
+    // The approval field is column Q in the counselor response tab. Ignore
+    // cell-by-cell manual entry until Admin makes the lifecycle decision.
+    if (17 < firstColumn || 17 > lastColumn) return;
+    return handleCounselorEdit(event);
+  }
   if (STUDENT_SHEETS[sheetName] || STUDENT_MANAGEMENT_SHEETS[sheetName]) {
     return handleStudentEdit(event);
   }
@@ -212,15 +219,28 @@ function mvpEnsureExternalId_(sheet, rowNumber, headerName, prefix) {
     const afterLock = mvpCellByHeader_(sheet, rowNumber, headerName);
     if (afterLock) return afterLock;
 
-    const pattern = new RegExp(`^${prefix}-(\\d+)$`, 'i');
+    const pattern = new RegExp('^' + prefix + '-([0-9]+)$', 'i');
+    const entityIdHeader = prefix === 'TTV'
+      ? 'counselor_id'
+      : (prefix === 'HS' ? 'student_id' : '');
+    const candidateHeaders = [headerName, entityIdHeader].filter(Boolean);
     let maximum = 0;
+
+    // Only inspect ID columns. Scanning every populated cell across the whole
+    // workbook made a single approval take several minutes and time out once
+    // the ERD tabs were added.
     SpreadsheetApp.getActive().getSheets().forEach(function(candidate) {
-      const values = candidate.getDataRange().getDisplayValues();
-      values.forEach(function(row) {
-        row.forEach(function(value) {
-          const match = String(value || '').trim().match(pattern);
-          if (match) maximum = Math.max(maximum, Number(match[1]));
-        });
+      if (candidate.getLastRow() <= 1 || candidate.getLastColumn() <= 0) return;
+      const headers = candidate.getRange(1, 1, 1, candidate.getLastColumn()).getDisplayValues()[0]
+        .map(function(value) { return String(value || '').trim(); });
+      headers.forEach(function(header, index) {
+        if (candidateHeaders.indexOf(header) === -1) return;
+        candidate.getRange(2, index + 1, candidate.getLastRow() - 1, 1)
+          .getDisplayValues()
+          .forEach(function(values) {
+            const match = String(values[0] || '').trim().match(pattern);
+            if (match) maximum = Math.max(maximum, Number(match[1]));
+          });
       });
     });
     const generated = `${prefix}-${String(maximum + 1).padStart(2, '0')}`;

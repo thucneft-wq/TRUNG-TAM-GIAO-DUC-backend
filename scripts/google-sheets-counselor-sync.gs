@@ -59,6 +59,18 @@ function handleCounselorEdit(event) {
   if (!event || !event.range || event.range.getRow() <= 1) return;
   const sheet = event.range.getSheet();
   if (sheet.getName() !== COUNSELOR_FORM_SHEET_) return;
+
+  // Manual data entry can emit one edit event per cell. Only the lifecycle
+  // decision should start a backend sync; otherwise a single new profile can
+  // fan out into many concurrent executions and exhaust the Apps Script limit.
+  const headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getDisplayValues()[0]
+    .map(function(header) { return counselorText_(header); });
+  const statusColumn = headers.indexOf(COUNSELOR_STATUS_HEADER_) + 1;
+  if (statusColumn <= 0) throw new Error(`Tab ${sheet.getName()} thiếu cột ${COUNSELOR_STATUS_HEADER_}.`);
+  const firstColumn = event.range.getColumn();
+  const lastColumn = firstColumn + event.range.getNumColumns() - 1;
+  if (statusColumn < firstColumn || statusColumn > lastColumn) return;
+
   const firstRow = event.range.getRow();
   const lastRow = firstRow + event.range.getNumRows() - 1;
   for (let row = firstRow; row <= lastRow; row += 1) syncCounselorRow_(sheet, row);
@@ -90,7 +102,11 @@ function syncCounselorRow_(sheet, rowNumber) {
   if (!firstName || !lastName) return false;
 
   const approval = counselorApproval_(row[COUNSELOR_STATUS_HEADER_]);
-  const existingExternalId = counselorText_(row[COUNSELOR_ID_HEADER_]);
+  let existingExternalId = counselorText_(row[COUNSELOR_ID_HEADER_]);
+  if (existingExternalId && counselorExternalIdUsedByAnotherRow_(sheet, rowNumber, existingExternalId)) {
+    mvpSetCellByHeader_(sheet, rowNumber, COUNSELOR_ID_HEADER_, '');
+    existingExternalId = '';
+  }
   const maySyncExistingLifecycle = approval === 'EXISTING_ONLY' && existingExternalId;
   if (approval !== 'APPROVED' && !maySyncExistingLifecycle) {
     if (existingExternalId) {
@@ -153,6 +169,54 @@ function syncCounselorRow_(sheet, rowNumber) {
     mvpSetCellByHeader_(sheet, rowNumber, COUNSELOR_SYNC_HEADER_, `Lỗi: ${error.message}`);
     throw error;
   }
+}
+
+function counselorExternalIdUsedByAnotherRow_(sheet, rowNumber, externalCounselorId) {
+  const headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getDisplayValues()[0]
+    .map(function(header) { return counselorText_(header); });
+  const idColumn = headers.indexOf(COUNSELOR_ID_HEADER_) + 1;
+  if (idColumn <= 0 || sheet.getLastRow() <= 1) return false;
+  const normalizedId = counselorText_(externalCounselorId).toUpperCase();
+  const duplicateResponse = sheet.getRange(2, idColumn, sheet.getLastRow() - 1, 1)
+    .getDisplayValues()
+    .some(function(values, index) {
+      return index + 2 !== rowNumber
+        && counselorText_(values[0]).toUpperCase() === normalizedId;
+    });
+  if (duplicateResponse) return true;
+
+  const official = SpreadsheetApp.getActive().getSheetByName('counselors');
+  if (!official || official.getLastRow() <= 1) return false;
+  const officialHeaders = official.getRange(1, 1, 1, official.getLastColumn()).getDisplayValues()[0]
+    .map(function(header) { return counselorText_(header); });
+  const officialIdIndex = officialHeaders.indexOf('counselor_id');
+  if (officialIdIndex < 0) return false;
+  const officialRows = official.getRange(2, 1, official.getLastRow() - 1, official.getLastColumn())
+    .getDisplayValues();
+  const existing = officialRows.find(function(values) {
+    return counselorText_(values[officialIdIndex]).toUpperCase() === normalizedId;
+  });
+  if (!existing) return false;
+
+  const emailColumn = headers.indexOf('Email liên hệ') + 1;
+  const phoneColumn = headers.indexOf('Số điện thoại liên hệ') + 1;
+  const rawEmail = emailColumn > 0
+    ? counselorText_(sheet.getRange(rowNumber, emailColumn).getDisplayValue()).toLowerCase()
+    : '';
+  const rawPhone = phoneColumn > 0
+    ? counselorText_(sheet.getRange(rowNumber, phoneColumn).getDisplayValue()).replace(/\D/g, '')
+    : '';
+  const officialEmailIndex = officialHeaders.indexOf('email');
+  const officialPhoneIndex = officialHeaders.indexOf('phone_number');
+  const officialEmail = officialEmailIndex >= 0
+    ? counselorText_(existing[officialEmailIndex]).toLowerCase()
+    : '';
+  const officialPhone = officialPhoneIndex >= 0
+    ? counselorText_(existing[officialPhoneIndex]).replace(/\D/g, '')
+    : '';
+  const sameEmail = rawEmail && officialEmail && rawEmail === officialEmail;
+  const samePhone = rawPhone && officialPhone && rawPhone === officialPhone;
+  return !sameEmail && !samePhone;
 }
 
 function counselorDeactivatePending_(sheet, rowNumber, row, externalCounselorId, firstName, lastName) {
