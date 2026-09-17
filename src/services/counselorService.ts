@@ -2,6 +2,7 @@ import type { CounselorRepositoryPort } from '../repositories/counselorRepositor
 import type {
   CounselorAnalyticsRow,
   CounselorDto,
+  CounselorStatus,
   CreateCounselorInput,
   KpiItem,
   ReportingPeriod,
@@ -19,6 +20,10 @@ import {
   MINIMUM_FEEDBACK_SAMPLE_SIZE,
 } from '../utils/kpiPolicy.js';
 import { getPeriodRange, safePercentage } from '../utils/period.js';
+
+export interface CounselorAssignmentReconciler {
+  reconcileCounselorAssignments(counselorId: string, status: CounselorStatus): Promise<number>;
+}
 
 const toNumber = (value: number | string | null): number | null => {
   if (value === null) return null;
@@ -204,7 +209,10 @@ export const mapAnalyticsRow = (row: CounselorAnalyticsRow): CounselorDto => {
 };
 
 export class CounselorService implements CounselorServicePort {
-  constructor(private readonly repository: CounselorRepositoryPort) {}
+  constructor(
+    private readonly repository: CounselorRepositoryPort,
+    private readonly assignmentReconciler?: CounselorAssignmentReconciler,
+  ) {}
 
   async list(period: ReportingPeriod): Promise<CounselorDto[]> {
     const rows = await this.repository.listAnalytics(getPeriodRange(period));
@@ -219,6 +227,7 @@ export class CounselorService implements CounselorServicePort {
 
   async create(input: CreateCounselorInput, period: ReportingPeriod): Promise<CounselorDto> {
     const profile = await this.repository.create(input);
+    await this.assignmentReconciler?.reconcileCounselorAssignments(profile.counselor_id, profile.status);
     return this.getById(profile.counselor_id, period);
   }
 
@@ -229,18 +238,24 @@ export class CounselorService implements CounselorServicePort {
   ): Promise<CounselorDto> {
     const profile = await this.repository.update(id, input);
     if (!profile) throw new AppError(404, 'Counselor was not found.', 'COUNSELOR_NOT_FOUND');
+    await this.assignmentReconciler?.reconcileCounselorAssignments(profile.counselor_id, profile.status);
     return this.getById(id, period);
   }
 
   async deactivate(id: string): Promise<void> {
     const updated = await this.repository.deactivate(id);
     if (!updated) throw new AppError(404, 'Counselor was not found.', 'COUNSELOR_NOT_FOUND');
+    await this.assignmentReconciler?.reconcileCounselorAssignments(id, 'INACTIVE');
   }
 
   async syncFromGoogleSheets(
     input: GoogleSheetsCounselorInput,
   ): Promise<{ counselor: CounselorDto; created: boolean }> {
     const result = await this.repository.syncFromGoogleSheets(input);
+    await this.assignmentReconciler?.reconcileCounselorAssignments(
+      result.profile.counselor_id,
+      result.profile.status,
+    );
     return {
       counselor: await this.getById(result.profile.counselor_id, 'this_month'),
       created: result.created,

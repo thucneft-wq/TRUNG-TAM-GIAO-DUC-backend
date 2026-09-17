@@ -7,6 +7,7 @@ import type {
   StudentRow,
   UpdateStudentInput,
 } from '../types/student.js';
+import type { CounselorStatus } from '../types/counselor.js';
 import { AppError } from '../utils/appError.js';
 
 export interface StudentRepositoryPort {
@@ -68,14 +69,11 @@ LEFT JOIN LATERAL (
     JOIN Counselor_Assignment_Records car ON car.assignment_id = ca.assignment_id
     JOIN Counselors c ON c.counselor_id = car.counselor_id
     WHERE ca.student_id = s.student_id
-    ORDER BY
-      CASE
-        WHEN UPPER(ca.status) = 'ACTIVE'
-          AND UPPER(car.status) = 'ACTIVE'
-          AND car.ended_at IS NULL THEN 0
-        ELSE 1
-      END,
-      car.assigned_at DESC
+      AND UPPER(ca.status) = 'ACTIVE'
+      AND UPPER(car.status) = 'ACTIVE'
+      AND car.ended_at IS NULL
+      AND UPPER(c.status) IN ('ACTIVE', 'ON_LEAVE')
+    ORDER BY car.assigned_at DESC
     LIMIT 1
 ) assigned ON TRUE
 `;
@@ -526,6 +524,7 @@ export class PgStudentRepository implements StudentRepositoryPort {
           AND UPPER(car.status) = 'ACTIVE'
           AND car.ended_at IS NULL
           AND c.external_counselor_id IS NOT NULL
+          AND UPPER(c.status) IN ('ACTIVE', 'ON_LEAVE')
         LIMIT 1
       `, [studentId]);
       if (current.rows[0]) {
@@ -579,6 +578,52 @@ export class PgStudentRepository implements StudentRepositoryPort {
     } finally {
       client.release();
     }
+  }
+
+  async reconcileCounselorAssignments(
+    counselorId: string,
+    status: CounselorStatus,
+  ): Promise<number> {
+    if (status === 'INACTIVE') {
+      await this.pool.query(`
+        WITH ended_records AS (
+          UPDATE Counselor_Assignment_Records car
+          SET status = 'INACTIVE', ended_at = COALESCE(car.ended_at, now()), updated_at = now()
+          WHERE car.counselor_id = $1::UUID
+            AND UPPER(car.status) = 'ACTIVE'
+            AND car.ended_at IS NULL
+          RETURNING car.assignment_id
+        )
+        UPDATE Counselor_Assignments ca
+        SET status = 'INACTIVE', updated_at = now()
+        WHERE ca.assignment_id IN (SELECT assignment_id FROM ended_records)
+          AND UPPER(ca.status) = 'ACTIVE'
+      `, [counselorId]);
+    }
+
+    const waiting = await this.pool.query<{ student_id: string }>(`
+      SELECT s.student_id
+      FROM Students s
+      WHERE UPPER(s.status) = 'ACTIVE'
+        AND NOT EXISTS (
+          SELECT 1
+          FROM Counselor_Assignments ca
+          JOIN Counselor_Assignment_Records car ON car.assignment_id = ca.assignment_id
+          JOIN Counselors c ON c.counselor_id = car.counselor_id
+          WHERE ca.student_id = s.student_id
+            AND UPPER(ca.status) = 'ACTIVE'
+            AND UPPER(car.status) = 'ACTIVE'
+            AND car.ended_at IS NULL
+            AND UPPER(c.status) IN ('ACTIVE', 'ON_LEAVE')
+        )
+      ORDER BY s.created_at, s.student_id
+    `);
+
+    let assignedCount = 0;
+    for (const student of waiting.rows) {
+      if (await this.ensureAutomaticAssignment(student.student_id)) assignedCount += 1;
+    }
+    return assignedCount;
   }
 
   async approve(studentId: string, counselorId?: string | null): Promise<boolean> {

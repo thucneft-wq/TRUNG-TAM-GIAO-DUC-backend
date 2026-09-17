@@ -104,3 +104,10 @@ Changing an existing application to `Chờ duyệt`, `Từ chối`, or `Ngừng 
 soft-deactivates the corresponding database profile. The record remains available for
 audit, while active Web lists omit it. Run `setupCounselorApprovalColumns()` once to add
 the approval dropdown and `installCounselorSyncTriggers()` once to install its triggers.
+
+When a counselor becomes `ACTIVE`, the backend immediately attempts to assign every
+active Student that does not have a valid active counselor. Assignment uses the
+least-loaded active counselor. When a counselor becomes `INACTIVE`, their active case
+records are closed and the affected Students are reassigned to another active counselor;
+if none is available, Admin continues to see the Student as unassigned. Counselor-scoped
+Web access only includes Students with an active assignment to that counselor.

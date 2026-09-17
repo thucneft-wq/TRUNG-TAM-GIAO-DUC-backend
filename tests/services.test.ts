@@ -10,7 +10,10 @@ import {
   type CounselorRepositoryPort,
 } from '../src/repositories/counselorRepository.js';
 import type { AnalyticsRepositoryPort } from '../src/repositories/analyticsRepository.js';
-import type { StudentRepositoryPort } from '../src/repositories/studentRepository.js';
+import {
+  PgStudentRepository,
+  type StudentRepositoryPort,
+} from '../src/repositories/studentRepository.js';
 import type { FeedbackRepositoryPort } from '../src/repositories/feedbackRepository.js';
 import { AnalyticsService } from '../src/services/analyticsService.js';
 import { AuthService } from '../src/services/authService.js';
@@ -380,6 +383,51 @@ test('counselor service reads and maps anonymous analytics', async () => {
   assert.equal(counselor.insufficientDataKpis, 1);
   assert.equal(counselor.hrCompliance.status, 'Compliant');
   assert.equal('students' in counselor, false);
+});
+
+test('counselor Sheet approval triggers assignment reconciliation', async () => {
+  const reconciliations: Array<{ counselorId: string; status: string }> = [];
+  const service = new CounselorService(createMockRepository(), {
+    reconcileCounselorAssignments: async (counselorId, status) => {
+      reconciliations.push({ counselorId, status });
+      return 1;
+    },
+  });
+
+  await service.syncFromGoogleSheets({
+    externalCounselorId: 'TTV-01',
+    firstName: 'Dev',
+    lastName: 'Counselor',
+    status: 'ACTIVE',
+  });
+  await service.deactivate(analyticsRow.counselor_id);
+
+  assert.deepEqual(reconciliations, [
+    { counselorId: analyticsRow.counselor_id, status: 'ACTIVE' },
+    { counselorId: analyticsRow.counselor_id, status: 'INACTIVE' },
+  ]);
+});
+
+test('inactive counselor reconciliation closes active assignment records', async () => {
+  const calls: Array<{ sql: string; values: unknown[] | undefined }> = [];
+  const fakePool = {
+    query: async (sql: string, values?: unknown[]) => {
+      calls.push({ sql, values });
+      return { rows: [], rowCount: 0 };
+    },
+  } as unknown as Pool;
+  const repository = new PgStudentRepository(fakePool);
+
+  const assigned = await repository.reconcileCounselorAssignments(
+    analyticsRow.counselor_id,
+    'INACTIVE',
+  );
+
+  assert.equal(assigned, 0);
+  assert.equal(calls.length, 2);
+  assert.match(calls[0].sql, /UPDATE Counselor_Assignment_Records/);
+  assert.match(calls[0].sql, /SET status = 'INACTIVE'/);
+  assert.match(calls[1].sql, /NOT EXISTS/);
 });
 
 test('SQL repository keeps create values parameterized', async () => {

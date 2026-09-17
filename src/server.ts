@@ -33,7 +33,7 @@ const counselorAccountRepository = new PgCounselorAccountRepository(pool);
 const analyticsRepository = new PgAnalyticsRepository(pool);
 const studentRepository = new PgStudentRepository(pool);
 const feedbackRepository = new PgFeedbackRepository(pool);
-const counselorService = new CounselorService(counselorRepository);
+const counselorService = new CounselorService(counselorRepository, studentRepository);
 const analyticsService = new AnalyticsService(
   analyticsRepository,
   config.minimumAnalyticsSampleSize,
