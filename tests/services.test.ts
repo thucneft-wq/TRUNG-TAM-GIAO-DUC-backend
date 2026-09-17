@@ -387,6 +387,7 @@ const createMockRepository = (): CounselorRepositoryPort => ({
     deactivatedCounselors: 0,
     closedAssignments: 0,
     counselorIds: [],
+    candidateExternalCounselorIds: [],
   }),
   getDashboardCounts: async () => ({
     total_students: 1,

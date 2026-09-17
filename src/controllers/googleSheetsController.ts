@@ -48,6 +48,7 @@ export class GoogleSheetsController {
     const input = googleSheetsCounselorReconcileSchema.parse(request.body);
     const result = await this.counselorService.reconcileFromGoogleSheets(
       input.activeExternalCounselorIds,
+      input.dryRun,
     );
     await this.analyticsService.recordAudit(
       'google-sheets',

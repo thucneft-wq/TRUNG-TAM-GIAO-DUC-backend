@@ -21,8 +21,8 @@ export interface CounselorRepositoryPort {
   syncFromGoogleSheets(
     input: GoogleSheetsCounselorInput,
   ): Promise<{ profile: CounselorProfileRow; created: boolean }>;
-  reconcileActiveExternalIds(activeExternalCounselorIds: string[]): Promise<
-    CounselorReconcileResult & { counselorIds: string[] }
+  reconcileActiveExternalIds(activeExternalCounselorIds: string[], dryRun?: boolean): Promise<
+    CounselorReconcileResult & { counselorIds: string[]; candidateExternalCounselorIds: string[] }
   >;
   getDashboardCounts(range: PeriodRange): Promise<DashboardCountsRow>;
   getDashboardTrends(range: PeriodRange): Promise<DashboardTrendRow[]>;
@@ -352,16 +352,57 @@ export class PgCounselorRepository implements CounselorRepositoryPort {
     return (result.rowCount ?? 0) > 0;
   }
 
-  async reconcileActiveExternalIds(activeExternalCounselorIds: string[]): Promise<
-    CounselorReconcileResult & { counselorIds: string[] }
+  async reconcileActiveExternalIds(activeExternalCounselorIds: string[], dryRun = false): Promise<
+    CounselorReconcileResult & { counselorIds: string[]; candidateExternalCounselorIds: string[] }
   > {
     const normalizedIds = [...new Set(
       activeExternalCounselorIds.map((id) => id.trim().toUpperCase()).filter(Boolean),
     )];
+    if (dryRun) {
+      const preview = await this.pool.query<{
+        candidate_external_ids: string[] | null;
+        candidate_count: number;
+        assignment_count: number;
+      }>(`
+        WITH stale AS (
+          SELECT counselor_id, external_counselor_id
+          FROM Counselors
+          WHERE UPPER(status) IN ('ACTIVE', 'ON_LEAVE')
+            AND (
+              external_counselor_id IS NULL
+              OR NOT (UPPER(external_counselor_id) = ANY($1::TEXT[]))
+            )
+        )
+        SELECT
+          ARRAY_AGG(COALESCE(external_counselor_id, counselor_id::TEXT) ORDER BY external_counselor_id)
+            AS candidate_external_ids,
+          COUNT(*)::INT AS candidate_count,
+          (
+            SELECT COUNT(DISTINCT ca.assignment_id)::INT
+            FROM Counselor_Assignment_Records car
+            JOIN Counselor_Assignments ca ON ca.assignment_id = car.assignment_id
+            WHERE car.counselor_id IN (SELECT counselor_id FROM stale)
+              AND UPPER(car.status) = 'ACTIVE'
+              AND car.ended_at IS NULL
+              AND UPPER(ca.status) = 'ACTIVE'
+          ) AS assignment_count
+        FROM stale
+      `, [normalizedIds]);
+      const row = preview.rows[0];
+      return {
+        deactivatedCounselors: Number(row?.candidate_count ?? 0),
+        closedAssignments: Number(row?.assignment_count ?? 0),
+        counselorIds: [],
+        candidateExternalCounselorIds: row?.candidate_external_ids ?? [],
+        dryRun: true,
+      };
+    }
+
     const result = await this.pool.query<{
       deactivated_counselors: number;
       closed_assignments: number;
       counselor_ids: string[] | null;
+      external_ids: string[] | null;
     }>(`
       WITH stale AS (
         SELECT counselor_id
@@ -391,18 +432,22 @@ export class PgCounselorRepository implements CounselorRepositoryPort {
         UPDATE Counselors c
         SET status = 'INACTIVE', updated_at = now()
         WHERE c.counselor_id IN (SELECT counselor_id FROM stale)
-        RETURNING c.counselor_id
+        RETURNING c.counselor_id, c.external_counselor_id
       )
       SELECT
         (SELECT COUNT(*)::INT FROM deactivated) AS deactivated_counselors,
         (SELECT COUNT(*)::INT FROM ended_assignments) AS closed_assignments,
-        (SELECT ARRAY_AGG(counselor_id) FROM deactivated) AS counselor_ids
+        (SELECT ARRAY_AGG(counselor_id) FROM deactivated) AS counselor_ids,
+        (SELECT ARRAY_AGG(COALESCE(external_counselor_id, counselor_id::TEXT)) FROM deactivated)
+          AS external_ids
     `, [normalizedIds]);
     const row = result.rows[0];
     return {
       deactivatedCounselors: Number(row?.deactivated_counselors ?? 0),
       closedAssignments: Number(row?.closed_assignments ?? 0),
       counselorIds: row?.counselor_ids ?? [],
+      candidateExternalCounselorIds: row?.external_ids ?? [],
+      dryRun: false,
     };
   }
 

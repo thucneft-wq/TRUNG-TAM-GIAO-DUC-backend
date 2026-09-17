@@ -176,4 +176,6 @@ export interface DashboardTrendRow {
 export interface CounselorReconcileResult {
   deactivatedCounselors: number;
   closedAssignments: number;
+  candidateExternalCounselorIds?: string[];
+  dryRun?: boolean;
 }

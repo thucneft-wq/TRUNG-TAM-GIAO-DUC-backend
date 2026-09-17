@@ -46,7 +46,10 @@ export interface CounselorServicePort {
   syncFromGoogleSheets(
     input: GoogleSheetsCounselorInput,
   ): Promise<{ counselor: CounselorDto; created: boolean }>;
-  reconcileFromGoogleSheets(activeExternalCounselorIds: string[]): Promise<CounselorReconcileResult>;
+  reconcileFromGoogleSheets(
+    activeExternalCounselorIds: string[],
+    dryRun?: boolean,
+  ): Promise<CounselorReconcileResult>;
 }
 
 export interface CounselorAccountServicePort {
