@@ -32,6 +32,7 @@ export const WEB_SHEET_TABLES = [
 export type WebSheetTable = (typeof WEB_SHEET_TABLES)[number];
 
 type Fetcher = typeof fetch;
+const SHEET_API_TIMEOUT_MS = 30_000;
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -68,7 +69,7 @@ export class SheetMirrorService implements SheetMirrorServicePort {
       response = await this.fetcher(url, {
         method: 'GET',
         redirect: 'follow',
-        signal: AbortSignal.timeout(10_000),
+        signal: AbortSignal.timeout(SHEET_API_TIMEOUT_MS),
       });
     } catch (error) {
       throw new AppError(502, 'The Web Sheet API could not be reached.', 'SHEET_API_UNAVAILABLE', {
