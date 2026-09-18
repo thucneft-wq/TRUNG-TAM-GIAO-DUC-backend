@@ -32,7 +32,8 @@ export const WEB_SHEET_TABLES = [
 export type WebSheetTable = (typeof WEB_SHEET_TABLES)[number];
 
 type Fetcher = typeof fetch;
-const SHEET_API_TIMEOUT_MS = 30_000;
+const SHEET_API_TIMEOUT_MS = 60_000;
+const SHEET_CACHE_TTL_MS = 20_000;
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -46,6 +47,10 @@ const isSheetMirrorPage = (value: unknown): value is SheetMirrorPage => {
 };
 
 export class SheetMirrorService implements SheetMirrorServicePort {
+  private readonly cache = new Map<string, { expiresAt: number; value: SheetMirrorPage }>();
+
+  private readonly inFlight = new Map<string, Promise<SheetMirrorPage>>();
+
   constructor(
     private readonly endpoint: string,
     private readonly apiKey: string,
@@ -57,6 +62,25 @@ export class SheetMirrorService implements SheetMirrorServicePort {
       throw new AppError(400, 'The requested Sheet table is not allowed.', 'SHEET_TABLE_NOT_ALLOWED');
     }
 
+    const cacheKey = `${table}:${page}:${pageSize}`;
+    const cached = this.cache.get(cacheKey);
+    if (cached && cached.expiresAt > Date.now()) return cached.value;
+
+    const pending = this.inFlight.get(cacheKey);
+    if (pending) return pending;
+
+    const request = this.fetchTable(table, page, pageSize);
+    this.inFlight.set(cacheKey, request);
+    try {
+      const value = await request;
+      this.cache.set(cacheKey, { expiresAt: Date.now() + SHEET_CACHE_TTL_MS, value });
+      return value;
+    } finally {
+      this.inFlight.delete(cacheKey);
+    }
+  }
+
+  private async fetchTable(table: string, page: number, pageSize: number): Promise<SheetMirrorPage> {
     const url = new URL(this.endpoint);
     url.searchParams.set('table', table);
     url.searchParams.set('page', String(page));
