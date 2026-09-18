@@ -79,6 +79,20 @@ export interface DashboardServicePort {
   get(period: ReportingPeriod): Promise<Record<string, unknown>>;
 }
 
+export interface SheetMirrorPage {
+  ok: true;
+  table: string;
+  lastSyncAt: string | null;
+  total: number;
+  page: number;
+  pageSize: number;
+  data: Array<Record<string, string>>;
+}
+
+export interface SheetMirrorServicePort {
+  readTable(table: string, page: number, pageSize: number): Promise<SheetMirrorPage>;
+}
+
 export interface AnalyticsServicePort {
   getFilterOptions(): Promise<AnalyticsFilterOptions>;
   getStudentTrends(filters: AnalyticsFilters): Promise<Record<string, unknown>>;

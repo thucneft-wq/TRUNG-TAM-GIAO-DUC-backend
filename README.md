@@ -60,6 +60,16 @@ test run is not a live database integration test. See `../docs/API_CONTRACT.md` 
 In Swagger UI, call `POST /api/auth/login`, copy the returned JWT, click **Authorize**,
 and paste the token into `bearerAuth` before testing protected routes.
 
+## Read-only Web Sheet mirror
+
+The Admin Web can read the separate `1rR9...` mirror through the protected backend route
+`GET /api/admin/sheet-mirror/:table`. Configure `WEB_SHEET_API_URL` with the deployed
+Apps Script `/exec` URL and store its read key in `WEB_SHEET_API_KEY`. Both values stay
+server-side; never expose the key through a `VITE_*` frontend variable or commit it.
+
+The route remains behind the normal Admin JWT and only accepts the explicit table allowlist.
+It does not write to either spreadsheet and does not replace the existing PostgreSQL routes.
+
 ## Google Sheet → PostgreSQL Student sync
 
 The API receives normalized Student rows at

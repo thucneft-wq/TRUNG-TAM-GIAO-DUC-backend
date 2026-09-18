@@ -7,6 +7,7 @@ import { DashboardController } from './controllers/dashboardController.js';
 import { HealthController } from './controllers/healthController.js';
 import { GoogleSheetsController } from './controllers/googleSheetsController.js';
 import { StudentController } from './controllers/studentController.js';
+import { SheetMirrorController } from './controllers/sheetMirrorController.js';
 import { createAuthenticateMiddleware, requireRole } from './middleware/authenticate.js';
 import { errorHandler, notFoundHandler } from './middleware/errorHandler.js';
 import { createAdminRouter } from './routes/adminRoutes.js';
@@ -23,6 +24,7 @@ import type {
   DashboardServicePort,
   FeedbackServicePort,
   StudentServicePort,
+  SheetMirrorServicePort,
 } from './types/services.js';
 import { AppError } from './utils/appError.js';
 
@@ -34,6 +36,7 @@ export interface AppDependencies {
   analyticsService: AnalyticsServicePort;
   feedbackService: FeedbackServicePort;
   studentService: StudentServicePort;
+  sheetMirrorService?: SheetMirrorServicePort;
   checkDatabase: () => Promise<void>;
   jwtSecret: string;
   corsOrigins: string[];
@@ -61,6 +64,9 @@ export const createApp = (dependencies: AppDependencies): Express => {
     dependencies.analyticsService,
   );
   const healthController = new HealthController(dependencies.checkDatabase);
+  const sheetMirrorController = dependencies.sheetMirrorService
+    ? new SheetMirrorController(dependencies.sheetMirrorService)
+    : undefined;
 
   app.disable('x-powered-by');
   app.use(cors({
@@ -105,7 +111,13 @@ export const createApp = (dependencies: AppDependencies): Express => {
     '/api/admin',
     authenticate,
     requireRole('admin'),
-    createAdminRouter(counselorController, dashboardController, analyticsController, dependencies.webCrudEnabled ?? true),
+    createAdminRouter(
+      counselorController,
+      dashboardController,
+      analyticsController,
+      dependencies.webCrudEnabled ?? true,
+      sheetMirrorController,
+    ),
   );
 
   app.use(notFoundHandler);

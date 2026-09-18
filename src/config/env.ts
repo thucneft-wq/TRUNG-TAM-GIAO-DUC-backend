@@ -28,8 +28,22 @@ const envSchema = z.object({
     (value) => value === '' ? undefined : value,
     z.string().min(32).optional(),
   ),
+  WEB_SHEET_API_URL: z.preprocess(
+    (value) => value === '' ? undefined : value,
+    z.url().optional(),
+  ),
+  WEB_SHEET_API_KEY: z.preprocess(
+    (value) => value === '' ? undefined : value,
+    z.string().min(32).optional(),
+  ),
   CORS_ORIGINS: z.string().min(1),
-});
+}).refine(
+  (value) => Boolean(value.WEB_SHEET_API_URL) === Boolean(value.WEB_SHEET_API_KEY),
+  {
+    message: 'WEB_SHEET_API_URL and WEB_SHEET_API_KEY must be configured together.',
+    path: ['WEB_SHEET_API_URL'],
+  },
+);
 
 export interface AppConfig {
   port: number;
@@ -39,6 +53,8 @@ export interface AppConfig {
   adminPasswordHash: string;
   minimumAnalyticsSampleSize: number;
   googleSheetsSyncSecret?: string;
+  webSheetApiUrl?: string;
+  webSheetApiKey?: string;
   webCrudEnabled: boolean;
   corsOrigins: string[];
 }
@@ -66,6 +82,8 @@ export const loadConfig = (source: NodeJS.ProcessEnv = process.env): AppConfig =
     adminPasswordHash: parsed.ADMIN_PASSWORD_HASH,
     minimumAnalyticsSampleSize: parsed.MIN_ANALYTICS_SAMPLE_SIZE,
     googleSheetsSyncSecret: parsed.GOOGLE_SHEETS_SYNC_SECRET,
+    webSheetApiUrl: parsed.WEB_SHEET_API_URL,
+    webSheetApiKey: parsed.WEB_SHEET_API_KEY,
     webCrudEnabled: parsed.WEB_CRUD_ENABLED,
     corsOrigins,
   };

@@ -20,6 +20,7 @@ import { AuthService } from '../src/services/authService.js';
 import { CounselorService } from '../src/services/counselorService.js';
 import { StudentService } from '../src/services/studentService.js';
 import { FeedbackService } from '../src/services/feedbackService.js';
+import { SheetMirrorService } from '../src/services/sheetMirrorService.js';
 import type { AnalyticsFilters } from '../src/types/analytics.js';
 import type { StudentRow } from '../src/types/student.js';
 import type {
@@ -36,6 +37,52 @@ import {
 import { safePercentage } from '../src/utils/period.js';
 import { AppError } from '../src/utils/appError.js';
 import { googleSheetsStudentSchema } from '../src/schemas/studentSchemas.js';
+
+test('Sheet mirror forwards bounded pagination and keeps the key server-side', async () => {
+  let requestedUrl = '';
+  const service = new SheetMirrorService(
+    'https://script.google.com/macros/s/deployment/exec',
+    'test-web-sheet-key-with-at-least-32-characters',
+    (async (input) => {
+      requestedUrl = String(input);
+      return new Response(JSON.stringify({
+        ok: true,
+        table: 'counselors',
+        lastSyncAt: '2026-09-18T10:00:00.000Z',
+        total: 1,
+        page: 2,
+        pageSize: 25,
+        data: [{ counselor_id: 'TTV-01', status: 'active' }],
+      }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    }) as typeof fetch,
+  );
+
+  const result = await service.readTable('counselors', 2, 25);
+  const url = new URL(requestedUrl);
+  assert.equal(url.searchParams.get('table'), 'counselors');
+  assert.equal(url.searchParams.get('page'), '2');
+  assert.equal(url.searchParams.get('limit'), '25');
+  assert.equal(url.searchParams.get('key'), 'test-web-sheet-key-with-at-least-32-characters');
+  assert.equal(result.data[0].counselor_id, 'TTV-01');
+});
+
+test('Sheet mirror rejects tables outside the allowlist before fetching', async () => {
+  let called = false;
+  const service = new SheetMirrorService(
+    'https://script.google.com/macros/s/deployment/exec',
+    'test-web-sheet-key-with-at-least-32-characters',
+    (async () => {
+      called = true;
+      return new Response('{}');
+    }) as typeof fetch,
+  );
+
+  await assert.rejects(
+    () => service.readTable('private_notes', 1, 100),
+    (error: unknown) => error instanceof AppError && error.code === 'SHEET_TABLE_NOT_ALLOWED',
+  );
+  assert.equal(called, false);
+});
 
 const createKpis = (failedId?: string, nullId?: string): KpiItem[] =>
   KPI_DEFINITIONS.map((definition) => {

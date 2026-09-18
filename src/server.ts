@@ -21,6 +21,7 @@ import { CounselorAccountService } from './services/counselorAccountService.js';
 import { DashboardService } from './services/dashboardService.js';
 import { FeedbackService } from './services/feedbackService.js';
 import { StudentService } from './services/studentService.js';
+import { SheetMirrorService } from './services/sheetMirrorService.js';
 
 // Keep a direct runtime import so Vercel recognizes this file as the Express entrypoint.
 void express;
@@ -56,6 +57,9 @@ const app = createApp({
   analyticsService,
   feedbackService: new FeedbackService(feedbackRepository),
   studentService,
+  sheetMirrorService: config.webSheetApiUrl && config.webSheetApiKey
+    ? new SheetMirrorService(config.webSheetApiUrl, config.webSheetApiKey)
+    : undefined,
   checkDatabase: createDatabaseHealthCheck(pool),
   jwtSecret: config.jwtSecret,
   corsOrigins: config.corsOrigins,

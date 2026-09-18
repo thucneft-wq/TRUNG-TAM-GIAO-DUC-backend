@@ -346,6 +346,32 @@ test('Google Sheets webhook requires its secret and synchronizes Student data', 
   assert.equal(synchronizedSchool, 'Trường THCS Mẫu');
 });
 
+test('Sheet mirror route stays behind Admin authentication', async () => {
+  const dependencies = createDependencies();
+  dependencies.sheetMirrorService = {
+    readTable: async () => ({
+      ok: true,
+      table: 'counselors',
+      lastSyncAt: null,
+      total: 1,
+      page: 1,
+      pageSize: 100,
+      data: [{ counselor_id: 'TTV-01', status: 'active' }],
+    }),
+  };
+
+  const unauthorized = await request(dependencies, '/api/admin/sheet-mirror/counselors');
+  assert.equal(unauthorized.status, 401);
+
+  const authorized = await request(dependencies, '/api/admin/sheet-mirror/counselors', {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  assert.equal(authorized.status, 200);
+  const payload = await authorized.json();
+  assert.equal(payload.total, 1);
+  assert.equal(payload.data[0].counselor_id, 'TTV-01');
+});
+
 test('Google Sheets reconciliation soft-deactivates students missing from management tabs', async () => {
   let receivedIds: string[] = [];
   const dependencies = createDependencies();
