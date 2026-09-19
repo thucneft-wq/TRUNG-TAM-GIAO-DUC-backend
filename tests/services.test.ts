@@ -3,6 +3,7 @@ import bcrypt from 'bcrypt';
 import test from 'node:test';
 import type { Pool } from 'pg';
 import {
+  CASELOAD_INTERVALS_SQL,
   COUNSELOR_ANALYTICS_SQL,
   DEACTIVATE_COUNSELOR_SQL,
   PgCounselorRepository,
@@ -17,7 +18,7 @@ import {
 import type { FeedbackRepositoryPort } from '../src/repositories/feedbackRepository.js';
 import { AnalyticsService } from '../src/services/analyticsService.js';
 import { AuthService } from '../src/services/authService.js';
-import { CounselorService } from '../src/services/counselorService.js';
+import { CounselorService, mapAnalyticsRow } from '../src/services/counselorService.js';
 import { StudentService } from '../src/services/studentService.js';
 import { FeedbackService } from '../src/services/feedbackService.js';
 import { SheetMirrorService } from '../src/services/sheetMirrorService.js';
@@ -34,7 +35,8 @@ import {
   evaluateKpiValue,
   KPI_DEFINITIONS,
 } from '../src/utils/kpiPolicy.js';
-import { safePercentage } from '../src/utils/period.js';
+import { getPeriodRange, safePercentage } from '../src/utils/period.js';
+import { calculatePeakCaseload } from '../src/utils/caseloadPolicy.js';
 import { AppError } from '../src/utils/appError.js';
 import { googleSheetsStudentSchema } from '../src/schemas/studentSchemas.js';
 
@@ -64,6 +66,26 @@ test('Sheet mirror forwards bounded pagination and keeps the key server-side', a
   assert.equal(url.searchParams.get('limit'), '25');
   assert.equal(url.searchParams.get('key'), 'test-web-sheet-key-with-at-least-32-characters');
   assert.equal(result.data[0].counselor_id, 'TTV-01');
+  assert.equal(result.timing?.cacheHit, false);
+  assert.equal(typeof result.timing?.upstreamDurationMs, 'number');
+
+  const cached = await service.readTable('counselors', 2, 25);
+  assert.equal(cached.timing?.cacheHit, true);
+});
+
+test('Sheet mirror classifies upstream timeouts without exposing request secrets', async () => {
+  const service = new SheetMirrorService(
+    'https://script.google.com/macros/s/deployment/exec',
+    'test-web-sheet-key-with-at-least-32-characters',
+    (async () => {
+      throw new DOMException('Timed out', 'TimeoutError');
+    }) as typeof fetch,
+  );
+
+  await assert.rejects(
+    () => service.readTable('students', 1, 100, { requestId: 'safe-test-request' }),
+    (error: unknown) => error instanceof AppError && error.code === 'SHEET_API_TIMEOUT',
+  );
 });
 
 test('Sheet mirror rejects tables outside the allowlist before fetching', async () => {
@@ -178,7 +200,9 @@ test('Admin KPI query follows the official formulas', () => {
     /UPPER\(c\.status\) IN \('ACTIVE', 'ON_LEAVE'\)/,
   );
   assert.match(COUNSELOR_ANALYTICS_SQL, /c\.external_counselor_id IS NOT NULL/);
-  assert.match(COUNSELOR_ANALYTICS_SQL, /car\.ended_at IS NULL/);
+  assert.match(CASELOAD_INTERVALS_SQL, /car\.assigned_at < \$3::TIMESTAMPTZ/);
+  assert.match(CASELOAD_INTERVALS_SQL, /car\.ended_at IS NULL OR car\.ended_at > \$2::TIMESTAMPTZ/);
+  assert.match(CASELOAD_INTERVALS_SQL, /LEFT JOIN Counselor_Assignments/);
   assert.match(COUNSELOR_ANALYTICS_SQL, /UPPER\(s\.status\) = 'COMPLETED'/);
   assert.doesNotMatch(COUNSELOR_ANALYTICS_SQL, /s\.ended_at IS NOT NULL/);
   assert.match(COUNSELOR_ANALYTICS_SQL, /b\.cancelled_at IS NOT NULL/);
@@ -199,6 +223,89 @@ test('Admin KPI query follows the official formulas', () => {
   assert.doesNotMatch(COUNSELOR_ANALYTICS_SQL, /tat\.submitted_at IS NOT NULL/);
   assert.match(COUNSELOR_ANALYTICS_SQL, /ROUND\(AVG\(f\.rating\)::NUMERIC, 2\)/);
   assert.doesNotMatch(COUNSELOR_ANALYTICS_SQL, /booking-cancellation-rate/);
+  assert.doesNotMatch(
+    COUNSELOR_ANALYTICS_SQL,
+    /Counselor_Assignment/i,
+    'Session, assessment and feedback history must not depend on current assignment status',
+  );
+});
+
+test('period caseload uses peak active weighted load and preserves ended history', () => {
+  const range = {
+    start: new Date('2026-09-01T00:00:00.000Z'),
+    end: new Date('2026-10-01T00:00:00.000Z'),
+  };
+  const result = calculatePeakCaseload([
+    {
+      counselor_id: 'TTV-01',
+      student_id: 'HS-01',
+      assigned_at: '2026-08-20T00:00:00.000Z',
+      ended_at: '2026-09-15T00:00:00.000Z',
+      assignment_status: 'INACTIVE',
+      record_status: 'INACTIVE',
+      case_weight: 1,
+    },
+    {
+      counselor_id: 'TTV-01',
+      student_id: 'HS-02',
+      assigned_at: '2026-09-10T00:00:00.000Z',
+      ended_at: null,
+      assignment_status: 'ACTIVE',
+      record_status: 'ACTIVE',
+      case_weight: 1.5,
+    },
+    {
+      counselor_id: 'TTV-01',
+      student_id: 'HS-02',
+      assigned_at: '2026-09-10T00:00:00.000Z',
+      ended_at: null,
+      assignment_status: 'ACTIVE',
+      record_status: 'ACTIVE',
+      case_weight: 1,
+    },
+  ], range);
+  assert.equal(result.dataComplete, true);
+  assert.equal(result.assignedStudents, 2);
+  assert.equal(result.weightedCaseloadPoints, 2.5);
+
+  const nextPeriod = calculatePeakCaseload([
+    {
+      counselor_id: 'TTV-01',
+      student_id: 'HS-01',
+      assigned_at: '2026-08-20T00:00:00.000Z',
+      ended_at: '2026-09-15T00:00:00.000Z',
+      assignment_status: 'INACTIVE',
+      record_status: 'INACTIVE',
+      case_weight: 1,
+    },
+  ], {
+    start: new Date('2026-10-01T00:00:00.000Z'),
+    end: new Date('2026-11-01T00:00:00.000Z'),
+  });
+  assert.equal(nextPeriod.weightedCaseloadPoints, 0, 'Ended assignments must not enter a later period');
+});
+
+test('incomplete assignment history is unavailable instead of zero', () => {
+  const result = calculatePeakCaseload([{
+    counselor_id: 'TTV-01',
+    student_id: 'HS-01',
+    assigned_at: null,
+    ended_at: null,
+    assignment_status: 'INACTIVE',
+    record_status: 'INACTIVE',
+    case_weight: 1,
+  }], {
+    start: new Date('2026-09-01T00:00:00.000Z'),
+    end: new Date('2026-10-01T00:00:00.000Z'),
+  });
+  assert.equal(result.weightedCaseloadPoints, null);
+  assert.deepEqual(result.missingFields, ['assigned_at', 'ended_at']);
+});
+
+test('reporting month boundaries use Asia/Ho_Chi_Minh', () => {
+  const range = getPeriodRange('this_month', new Date('2026-09-19T05:00:00.000Z'));
+  assert.equal(range.start.toISOString(), '2026-08-31T17:00:00.000Z');
+  assert.equal(range.end.toISOString(), '2026-09-30T17:00:00.000Z');
 });
 
 test('Only the configured Admin account can authenticate to the Web portal', async () => {
@@ -461,6 +568,34 @@ test('counselor service reads and maps anonymous analytics', async () => {
   assert.equal(counselor.insufficientDataKpis, 1);
   assert.equal(counselor.hrCompliance.status, 'Compliant');
   assert.equal('students' in counselor, false);
+});
+
+test('caseload zero is insufficient while incomplete source stays unavailable', () => {
+  const zero = mapAnalyticsRow({
+    ...analyticsRow,
+    assigned_students: 0,
+    weighted_caseload_points: 0,
+    caseload_data_complete: true,
+  });
+  const zeroCaseload = zero.kpis.find((kpi) => kpi.id === 'weighted-caseload-capacity')!;
+  assert.equal(zeroCaseload.actualNumeric, 0);
+  assert.equal(zeroCaseload.actualValue, '0 hồ sơ quy đổi');
+  assert.equal(zeroCaseload.isPassed, false);
+  assert.equal(zero.overallStatus, 'Insufficient Data');
+
+  const unavailable = mapAnalyticsRow({
+    ...analyticsRow,
+    assigned_students: null,
+    weighted_caseload_points: null,
+    caseload_data_complete: false,
+    caseload_missing_fields: ['assigned_at'],
+  });
+  const unavailableCaseload = unavailable.kpis.find(
+    (kpi) => kpi.id === 'weighted-caseload-capacity',
+  )!;
+  assert.equal(unavailableCaseload.actualNumeric, null);
+  assert.equal(unavailableCaseload.actualValue, '—');
+  assert.deepEqual(unavailableCaseload.evidence?.missingFields, ['assigned_at']);
 });
 
 test('counselor Sheet approval triggers assignment reconciliation', async () => {

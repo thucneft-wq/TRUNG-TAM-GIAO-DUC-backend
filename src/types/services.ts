@@ -87,10 +87,26 @@ export interface SheetMirrorPage {
   page: number;
   pageSize: number;
   data: Array<Record<string, string>>;
+  timing?: {
+    cacheHit: boolean;
+    backendDurationMs: number;
+    upstreamDurationMs: number;
+    parseDurationMs: number;
+    appsScriptDurationMs: number | null;
+  };
+}
+
+export interface SheetMirrorReadContext {
+  requestId: string;
 }
 
 export interface SheetMirrorServicePort {
-  readTable(table: string, page: number, pageSize: number): Promise<SheetMirrorPage>;
+  readTable(
+    table: string,
+    page: number,
+    pageSize: number,
+    context?: SheetMirrorReadContext,
+  ): Promise<SheetMirrorPage>;
 }
 
 export interface AnalyticsServicePort {

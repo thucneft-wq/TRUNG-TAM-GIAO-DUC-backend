@@ -1,4 +1,5 @@
 import type { Request, Response } from 'express';
+import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { WEB_SHEET_TABLES } from '../services/sheetMirrorService.js';
 import type { SheetMirrorServicePort } from '../types/services.js';
@@ -18,6 +19,23 @@ export class SheetMirrorController {
   readTable = async (request: Request, response: Response): Promise<void> => {
     const { table } = paramsSchema.parse(request.params);
     const { page, pageSize } = querySchema.parse(request.query);
-    response.status(200).json(await this.service.readTable(table, page, pageSize));
+    const providedRequestId = request.header('x-request-id')?.trim();
+    const requestId = providedRequestId && providedRequestId.length <= 128
+      ? providedRequestId
+      : randomUUID();
+    const result = await this.service.readTable(table, page, pageSize, { requestId });
+    const timing = result.timing;
+    response.setHeader('X-Request-Id', requestId);
+    if (timing) {
+      response.setHeader('Server-Timing', [
+        `sheet_proxy;dur=${timing.backendDurationMs}`,
+        `sheet_upstream;dur=${timing.upstreamDurationMs}`,
+        `sheet_parse;dur=${timing.parseDurationMs}`,
+        timing.appsScriptDurationMs === null
+          ? null
+          : `apps_script;dur=${timing.appsScriptDurationMs}`,
+      ].filter(Boolean).join(', '));
+    }
+    response.status(200).json(result);
   };
 }

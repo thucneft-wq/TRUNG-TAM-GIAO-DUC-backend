@@ -21,18 +21,18 @@ export interface KpiDefinition {
 export const KPI_DEFINITIONS: readonly KpiDefinition[] = [
   {
     id: 'weighted-caseload-capacity',
-    name: 'Weighted Caseload Capacity',
+    name: 'Tải hồ sơ đang phụ trách',
     category: 'Safety and Workload',
     targetNumeric: 20,
-    targetValue: '<= 20 weighted cases / FTE',
+    targetValue: 'Không quá 20 hồ sơ quy đổi/FTE',
     comparisonType: 'lte',
-    unit: 'case points / FTE',
+    unit: 'hồ sơ quy đổi',
     weight: 15,
     hardGuardrail: true,
   },
   {
     id: 'student-service-time',
-    name: 'Student Service Time',
+    name: 'Thời lượng phục vụ học sinh',
     category: 'Service Allocation',
     targetNumeric: 80,
     targetValue: '>= 80% of registered service time',
@@ -42,7 +42,7 @@ export const KPI_DEFINITIONS: readonly KpiDefinition[] = [
   },
   {
     id: 'eligible-session-completion',
-    name: 'Eligible Session Completion',
+    name: 'Tỷ lệ hoàn thành phiên tham vấn',
     category: 'Continuity of Care',
     targetNumeric: 80,
     targetValue: '>= 80% of eligible due sessions',
@@ -52,7 +52,7 @@ export const KPI_DEFINITIONS: readonly KpiDefinition[] = [
   },
   {
     id: 'assessment-follow-through',
-    name: 'Assessment Follow-through',
+    name: 'Tỷ lệ hoàn thành bài đánh giá',
     category: 'Appropriate Assessment',
     targetNumeric: 80,
     targetValue: '>= 80% of eligible assigned assessments',
@@ -62,7 +62,7 @@ export const KPI_DEFINITIONS: readonly KpiDefinition[] = [
   },
   {
     id: 'student-outcome-experience',
-    name: 'Student Outcome and Experience',
+    name: 'Kết quả và trải nghiệm học sinh',
     category: 'Perceived Outcome',
     targetNumeric: 80,
     targetValue: '>= 80% with at least 5 responses',

@@ -11,6 +11,10 @@ import type {
 } from '../types/counselor.js';
 import type { GoogleSheetsCounselorInput } from '../types/googleSheets.js';
 import { AppError } from '../utils/appError.js';
+import {
+  calculatePeakCaseload,
+  type CaseloadIntervalRow,
+} from '../utils/caseloadPolicy.js';
 
 export interface CounselorRepositoryPort {
   listAnalytics(range: PeriodRange): Promise<CounselorAnalyticsRow[]>;
@@ -35,24 +39,6 @@ WITH counselor_scope AS (
     WHERE ($1::UUID IS NULL OR c.counselor_id = $1::UUID)
       AND (NOT $2::BOOLEAN OR UPPER(c.status) IN ('ACTIVE', 'ON_LEAVE'))
       AND (NOT $2::BOOLEAN OR c.external_counselor_id IS NOT NULL)
-), caseload_cases AS (
-    SELECT
-        car.counselor_id,
-        ca.student_id,
-        MAX(car.case_weight)::NUMERIC AS case_weight
-    FROM Counselor_Assignment_Records car
-    JOIN Counselor_Assignments ca ON ca.assignment_id = car.assignment_id
-    WHERE UPPER(car.status) = 'ACTIVE'
-      AND car.ended_at IS NULL
-      AND UPPER(ca.status) = 'ACTIVE'
-    GROUP BY car.counselor_id, ca.student_id
-), caseload AS (
-    SELECT
-        counselor_id,
-        COUNT(*)::INT AS assigned_students,
-        ROUND(SUM(case_weight), 2) AS weighted_caseload_points
-    FROM caseload_cases
-    GROUP BY counselor_id
 ), availability_daily AS (
     SELECT
         a.counselor_id,
@@ -175,8 +161,8 @@ SELECT
     c.status,
     c.created_at,
     c.updated_at,
-    COALESCE(cl.assigned_students, 0)::INT AS assigned_students,
-    COALESCE(cl.weighted_caseload_points, 0)::NUMERIC AS weighted_caseload_points,
+    NULL::INT AS assigned_students,
+    NULL::NUMERIC AS weighted_caseload_points,
     c.fte_ratio::NUMERIC AS fte_ratio,
     COALESCE(ss.student_service_hours, 0)::NUMERIC AS student_service_hours,
     COALESCE(av.registered_workdays, 0)::INT AS registered_workdays,
@@ -197,7 +183,6 @@ SELECT
     fs.satisfaction_score,
     COALESCE(fs.feedback_count, 0)::INT AS feedback_count
 FROM counselor_scope c
-LEFT JOIN caseload cl ON cl.counselor_id = c.counselor_id
 LEFT JOIN availability_stats av ON av.counselor_id = c.counselor_id
 LEFT JOIN availability_rest_stats ars ON ars.counselor_id = c.counselor_id
 LEFT JOIN session_stats ss ON ss.counselor_id = c.counselor_id
@@ -206,6 +191,41 @@ LEFT JOIN test_stats ts ON ts.counselor_id = c.counselor_id
 LEFT JOIN feedback_stats fs ON fs.counselor_id = c.counselor_id
 ORDER BY c.last_name, c.first_name
 `;
+
+export const CASELOAD_INTERVALS_SQL = `
+SELECT
+    car.counselor_id,
+    ca.student_id,
+    car.assigned_at,
+    car.ended_at,
+    ca.status AS assignment_status,
+    car.status AS record_status,
+    car.case_weight
+FROM Counselor_Assignment_Records car
+LEFT JOIN Counselor_Assignments ca ON ca.assignment_id = car.assignment_id
+WHERE ($1::UUID IS NULL OR car.counselor_id = $1::UUID)
+  AND (car.assigned_at IS NULL OR car.assigned_at < $3::TIMESTAMPTZ)
+  AND (car.ended_at IS NULL OR car.ended_at > $2::TIMESTAMPTZ)
+ORDER BY car.counselor_id, car.assigned_at, car.assignment_record_id
+`;
+
+const attachPeriodCaseload = (
+  rows: CounselorAnalyticsRow[],
+  intervals: CaseloadIntervalRow[],
+  range: PeriodRange,
+): CounselorAnalyticsRow[] => rows.map((row) => {
+  const result = calculatePeakCaseload(
+    intervals.filter((record) => record.counselor_id === row.counselor_id),
+    range,
+  );
+  return {
+    ...row,
+    assigned_students: result.assignedStudents,
+    weighted_caseload_points: result.weightedCaseloadPoints,
+    caseload_data_complete: result.dataComplete,
+    caseload_missing_fields: result.missingFields,
+  };
+});
 
 const CREATE_COUNSELOR_SQL = `
 INSERT INTO Counselors (
@@ -295,23 +315,28 @@ export class PgCounselorRepository implements CounselorRepositoryPort {
   constructor(private readonly pool: Pick<Pool, 'query'>) {}
 
   async listAnalytics(range: PeriodRange): Promise<CounselorAnalyticsRow[]> {
-    const result = await this.pool.query(COUNSELOR_ANALYTICS_SQL, [
-      null,
-      true,
-      range.start,
-      range.end,
+    const [analytics, caseload] = await Promise.all([
+      this.pool.query(COUNSELOR_ANALYTICS_SQL, [null, true, range.start, range.end]),
+      this.pool.query(CASELOAD_INTERVALS_SQL, [null, range.start, range.end]),
     ]);
-    return result.rows as CounselorAnalyticsRow[];
+    return attachPeriodCaseload(
+      analytics.rows as CounselorAnalyticsRow[],
+      caseload.rows as CaseloadIntervalRow[],
+      range,
+    );
   }
 
   async getAnalyticsById(id: string, range: PeriodRange): Promise<CounselorAnalyticsRow | null> {
-    const result = await this.pool.query(COUNSELOR_ANALYTICS_SQL, [
-      id,
-      false,
-      range.start,
-      range.end,
+    const [analytics, caseload] = await Promise.all([
+      this.pool.query(COUNSELOR_ANALYTICS_SQL, [id, false, range.start, range.end]),
+      this.pool.query(CASELOAD_INTERVALS_SQL, [id, range.start, range.end]),
     ]);
-    return (result.rows[0] as CounselorAnalyticsRow | undefined) ?? null;
+    const rows = attachPeriodCaseload(
+      analytics.rows as CounselorAnalyticsRow[],
+      caseload.rows as CaseloadIntervalRow[],
+      range,
+    );
+    return rows[0] ?? null;
   }
 
   async create(input: CreateCounselorInput): Promise<CounselorProfileRow> {

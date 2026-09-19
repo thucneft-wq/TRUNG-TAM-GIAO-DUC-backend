@@ -41,8 +41,10 @@ export interface CounselorProfileRow {
 }
 
 export interface CounselorAnalyticsRow extends CounselorProfileRow {
-  assigned_students: number | string;
-  weighted_caseload_points: number | string;
+  assigned_students: number | string | null;
+  weighted_caseload_points: number | string | null;
+  caseload_data_complete?: boolean;
+  caseload_missing_fields?: string[];
   student_service_hours: number | string;
   registered_workdays: number | string;
   registered_hours: number | string;
@@ -89,6 +91,7 @@ export interface KpiItem {
     studentServiceHours?: number;
     minimumSampleSize?: number;
     averageRating?: number;
+    missingFields?: string[];
   };
 }
 

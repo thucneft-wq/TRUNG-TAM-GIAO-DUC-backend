@@ -34,7 +34,7 @@ const toNumber = (value: number | string | null): number | null => {
 const toCount = (value: number | string): number => toNumber(value) ?? 0;
 
 const formatActual = (actual: number | null, unit: string): string => {
-  if (actual === null) return 'Unavailable';
+  if (actual === null) return '—';
   if (unit === '%') return `${actual.toFixed(2)}%`;
   if (unit === '/ 5.0') return `${actual.toFixed(2)} / 5.0`;
   return `${actual} ${unit}`;
@@ -56,10 +56,15 @@ const createKpi = (
 });
 
 export const mapAnalyticsRow = (row: CounselorAnalyticsRow): CounselorDto => {
-  const assignedStudents = toCount(row.assigned_students);
-  const weightedCaseloadPoints = toNumber(row.weighted_caseload_points) ?? assignedStudents;
+  const caseloadDataComplete = row.caseload_data_complete !== false;
+  const assignedStudents = caseloadDataComplete && row.assigned_students !== null
+    ? toCount(row.assigned_students)
+    : 0;
+  const weightedCaseloadPoints = caseloadDataComplete
+    ? toNumber(row.weighted_caseload_points)
+    : null;
   const fteRatio = toNumber(row.fte_ratio) ?? 1;
-  const normalizedCaseload = fteRatio > 0
+  const normalizedCaseload = weightedCaseloadPoints !== null && fteRatio > 0
     ? Math.round((weightedCaseloadPoints / fteRatio) * 100) / 100
     : null;
   const studentServiceHours = toNumber(row.student_service_hours) ?? 0;
@@ -101,8 +106,15 @@ export const mapAnalyticsRow = (row: CounselorAnalyticsRow): CounselorDto => {
         return createKpi(
           definition,
           actual,
-          'Active cases are normalized by FTE. The current schema defaults each case to weight 1 and each counselor to 1.0 FTE.',
-          { sampleSize: assignedStudents, weightedCaseloadPoints, fteRatio },
+          caseloadDataComplete
+            ? 'Peak weighted active caseload in the selected period, normalized by FTE. Each counselor-student pair is counted once at each point in time.'
+            : `Caseload history is incomplete. Missing or inconsistent fields: ${(row.caseload_missing_fields ?? []).join(', ') || 'assignment history'}.`,
+          {
+            sampleSize: assignedStudents,
+            weightedCaseloadPoints: weightedCaseloadPoints ?? undefined,
+            fteRatio,
+            missingFields: row.caseload_missing_fields,
+          },
         );
       case 'student-service-time':
         return createKpi(

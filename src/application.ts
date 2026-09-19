@@ -71,6 +71,7 @@ export const createApp = (dependencies: AppDependencies): Express => {
   app.disable('x-powered-by');
   app.use(cors({
     credentials: true,
+    exposedHeaders: ['Server-Timing', 'X-Request-Id'],
     origin: (origin, callback) => {
       if (!origin || dependencies.corsOrigins.includes(origin)) {
         callback(null, true);

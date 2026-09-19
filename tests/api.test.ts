@@ -357,6 +357,13 @@ test('Sheet mirror route stays behind Admin authentication', async () => {
       page: 1,
       pageSize: 100,
       data: [{ counselor_id: 'TTV-01', status: 'active' }],
+      timing: {
+        cacheHit: false,
+        backendDurationMs: 12,
+        upstreamDurationMs: 9,
+        parseDurationMs: 1,
+        appsScriptDurationMs: 7,
+      },
     }),
   };
 
@@ -370,6 +377,8 @@ test('Sheet mirror route stays behind Admin authentication', async () => {
   const payload = await authorized.json();
   assert.equal(payload.total, 1);
   assert.equal(payload.data[0].counselor_id, 'TTV-01');
+  assert.match(authorized.headers.get('server-timing') ?? '', /sheet_proxy;dur=12/);
+  assert.ok(authorized.headers.get('x-request-id'));
 });
 
 test('Google Sheets reconciliation soft-deactivates students missing from management tabs', async () => {
